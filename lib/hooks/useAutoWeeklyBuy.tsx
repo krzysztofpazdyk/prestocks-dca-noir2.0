@@ -228,7 +228,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
           const tooSoon =
             /TooSoon/i.test(err) ||
             /\b6008\b/.test(err) ||
-            /0x1770/i.test(err);
+            /0x177[08]/i.test(err);
           if (!tooSoon) {
             setPhase("error");
             setMessage(
@@ -337,7 +337,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     if (st.phase === "error" && st.error) {
       const err = String(st.error);
       const tooSoon =
-        /TooSoon/i.test(err) || /\b6008\b/.test(err) || /0x1770/i.test(err);
+        /TooSoon/i.test(err) || /\b6008\b/.test(err) || /0x177[08]/i.test(err);
       if (tooSoon) {
         // Enabled despite cooldown on force-buy — show schedule, not hard error.
         const whenMs = st.nextAt

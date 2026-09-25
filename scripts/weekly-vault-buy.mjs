@@ -1203,7 +1203,7 @@ function startKeeperHttp() {
           const msg = e instanceof Error ? e.message : String(e);
           log("enable force-buy error (still enabled)", owner, msg);
           const tooSoon =
-            /TooSoon/i.test(msg) || /\b6008\b/.test(msg) || /0x1770/i.test(msg);
+            /TooSoon/i.test(msg) || /\b6008\b/.test(msg) || /0x177[08]/i.test(msg);
           const nextAt = new Date(Date.now() + WEEK_MS).toISOString();
           if (tooSoon) {
             writeOwnerState(owner, {
