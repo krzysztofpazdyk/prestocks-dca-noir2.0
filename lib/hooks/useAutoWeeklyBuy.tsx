@@ -221,17 +221,36 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         if (ran.reason === "busy") {
           throw new Error("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
         }
+        // Secondary UX: enable stays ON if force-buy hit TooSoon (manual buy cooldown).
+        // Primary path is on-chain skip_cooldown so purchase actually happens.
+        if (ran.reason === "buy_error") {
+          const err = String(ran.error || "");
+          const tooSoon =
+            /TooSoon/i.test(err) ||
+            /\b6008\b/.test(err) ||
+            /0x1770/i.test(err);
+          if (!tooSoon) {
+            setPhase("error");
+            setMessage(
+              tRef.current("auto.status.error", {
+                reason: err || "buy_error",
+              }),
+            );
+            return;
+          }
+        }
+        const whenMs = ran.nextAt
+          ? Date.parse(ran.nextAt) || Date.now() + WEEK_MS
+          : Date.now() + WEEK_MS;
         setPhase("idle");
         setDue(false);
-        if (ran.nextAt) {
-          setNextAt(Date.parse(ran.nextAt) || Date.now() + WEEK_MS);
-        }
-        setMessage(tRef.current("auto.status.next", {
-          when: formatWarsawWhen(
-            ran.nextAt ? Date.parse(ran.nextAt) : Date.now() + WEEK_MS,
-            localeRef.current,
-          ),
-        }));
+        setNextAt(whenMs);
+        setBlockReason(null);
+        setMessage(
+          tRef.current("auto.status.next", {
+            when: formatWarsawWhen(whenMs, localeRef.current),
+          }),
+        );
         return;
       }
       if (ran.names && ran.names.length >= 3) {
@@ -316,6 +335,25 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       return;
     }
     if (st.phase === "error" && st.error) {
+      const err = String(st.error);
+      const tooSoon =
+        /TooSoon/i.test(err) || /\b6008\b/.test(err) || /0x1770/i.test(err);
+      if (tooSoon) {
+        // Enabled despite cooldown on force-buy — show schedule, not hard error.
+        const whenMs = st.nextAt
+          ? Date.parse(st.nextAt) || Date.now() + WEEK_MS
+          : Date.now() + WEEK_MS;
+        setPhase("idle");
+        setDue(false);
+        setNextAt(whenMs);
+        setBlockReason(null);
+        setMessage(
+          tRef.current("auto.status.next", {
+            when: formatWarsawWhen(whenMs, localeRef.current),
+          }),
+        );
+        return;
+      }
       setPhase("error");
       setMessage(tRef.current("auto.status.error", { reason: st.error }));
       return;

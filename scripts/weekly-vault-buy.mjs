@@ -983,8 +983,9 @@ async function runOnce(opts) {
     budgetUsd,
   });
 
+  // force (enable) skips on-chain 7d cooldown so manual buys don't block auto-enable.
   const sig = await program.methods
-    .executeBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0))
+    .executeBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0), force)
     .accounts({
       keeper: keeper.publicKey,
       config: configPda(pid)[0],
@@ -1189,13 +1190,43 @@ function startKeeperHttp() {
         writeEnabled(owner, true);
         writeOwnerState(owner, { phase: "enabled", enabled: true });
         log("enabled keeper for", owner, "force", body.force !== false);
-        const result = await withBuyLock(() =>
-          runOnce({
-            force: body.force !== false,
-            requireEnabled: false,
+        let result;
+        try {
+          result = await withBuyLock(() =>
+            runOnce({
+              force: body.force !== false,
+              requireEnabled: false,
+              owner,
+            }),
+          );
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          log("enable force-buy error (still enabled)", owner, msg);
+          const tooSoon =
+            /TooSoon/i.test(msg) || /\b6008\b/.test(msg) || /0x1770/i.test(msg);
+          const nextAt = new Date(Date.now() + WEEK_MS).toISOString();
+          if (tooSoon) {
+            writeOwnerState(owner, {
+              phase: "not_due",
+              enabled: true,
+              nextAt,
+              error: null,
+            });
+            writeStatus({ phase: "not_due", enabled: true, owner, nextAt });
+          } else {
+            writeOwnerState(owner, { phase: "error", enabled: true, error: msg });
+          }
+          json(res, req, 200, {
+            ok: true,
+            enabled: true,
             owner,
-          }),
-        );
+            skipped: true,
+            reason: "buy_error",
+            error: msg,
+            ...(tooSoon ? { nextAt } : {}),
+          });
+          return;
+        }
         json(res, req, 200, { ok: !result.error, enabled: true, owner, ...result });
         return;
       }

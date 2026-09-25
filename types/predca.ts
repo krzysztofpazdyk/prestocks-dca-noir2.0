@@ -97,7 +97,8 @@ export type Predca = {
     {
       "name": "executeBuy",
       "docs": [
-        "Keeper crank: owner is not a signer. Bot pays fees; vault PDA spends USDC."
+        "Keeper crank: owner is not a signer. Bot pays fees; vault PDA spends USDC.",
+        "`skip_cooldown`: when true (enable force-buy), do not enforce 7-day last_run_ts cooldown."
       ],
       "discriminator": [
         14,
@@ -554,6 +555,10 @@ export type Predca = {
               32
             ]
           }
+        },
+        {
+          "name": "skipCooldown",
+          "type": "bool"
         }
       ]
     },
