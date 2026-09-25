@@ -129,20 +129,19 @@ export function SettingsView() {
       let buyDespite = readBuyDespiteIpo();
 
       try {
+        const wallet = publicKey?.toBase58() ?? null;
         const [status, prefsRes] = await Promise.all([
-          keeperStatus(),
-          keeperGetPrefs(),
+          keeperStatus(wallet ?? undefined),
+          keeperGetPrefs(wallet ?? undefined),
         ]);
         if (cancelled) return;
 
         const configuredOwner =
           (typeof status.owner === "string" && status.owner.trim()) || null;
-        const wallet = publicKey?.toBase58() ?? null;
         const ownerConflict =
           !!configuredOwner && !!wallet && configuredOwner !== wallet;
 
-        // Daemon stores a single prefs.json (global). Apply when GET ok and
-        // there is no owner/wallet mismatch.
+        // Per-owner prefs when wallet known. Skip apply on owner mismatch.
         if (prefsRes.ok && prefsRes.prefs && !ownerConflict) {
           const applied = applyApiPrefsToLocal(prefsRes.prefs);
           exclusionsRaw = applied.exclusionsRaw;
@@ -267,7 +266,11 @@ export function SettingsView() {
         signMessage,
       );
       if (!res.ok) {
-        setPrefsSaveMsg(t("settings.prefsSignFailed"));
+        setPrefsSaveMsg(
+          res.error
+            ? `${t("settings.prefsSignFailed")}: ${res.error}`
+            : t("settings.prefsSignFailed"),
+        );
         return;
       }
       setSyncedBaseline(

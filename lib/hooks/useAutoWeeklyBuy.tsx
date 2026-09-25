@@ -14,7 +14,6 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import {
   keeperDisable,
   keeperEnable,
-  keeperPushPrefs,
   keeperHealth,
   keeperStatus,
 } from "@/lib/keeper-client";
@@ -96,18 +95,17 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     if (publicKey) ignoreOffUntilRef.current = Date.now() + 2000;
     let cancelled = false;
     void (async () => {
-      const st = await keeperStatus();
-      const local = readAutoWeeklyBuyPref();
       const owner = ownerRef.current;
+      const st = await keeperStatus(owner ?? undefined);
+      const local = readAutoWeeklyBuyPref();
       if (cancelled) return;
       const keeperOn = st.enabled === true;
       const configuredOwner =
         (typeof st.owner === "string" && st.owner.trim()) || null;
       const sameOwner =
-        !!owner && !!configuredOwner && owner === configuredOwner;
-      // Prefer same-owner + keeper status; do not auto-sign enable on mount
-      // (wallet popup). Toggle / startCycle signs explicitly.
-      const showOn = (sameOwner && keeperOn) || (sameOwner && local === true);
+        !owner || !configuredOwner || owner === configuredOwner;
+      // Per-owner status when wallet known; do not auto-sign enable on mount.
+      const showOn = Boolean(owner) && sameOwner && (keeperOn || local === true);
       setEnabledState(showOn);
       if (showOn) writeAutoWeeklyBuy(true);
       setPrefsReady(true);
@@ -197,19 +195,13 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       });
       setPhase("buying");
       setMessage(tRef.current("auto.status.buyingKeeper"));
-      const prefsRes = await keeperPushPrefs(
-        rankPrefsForApi(readRankPrefs()),
+      // One signature: daemon syncs prefs on enable.
+      const ran = await keeperEnable(
         owner,
+        true,
         sign,
+        rankPrefsForApi(readRankPrefs()),
       );
-      if (!prefsRes.ok) {
-        throw new Error(
-          prefsRes.error?.includes("signature") || prefsRes.error?.includes("sign_")
-            ? `Podpis odrzucony (prefs): ${prefsRes.error}`
-            : prefsRes.error || "prefs failed",
-        );
-      }
-      const ran = await keeperEnable(owner, true, sign);
       if (!ran.ok) {
         const err = ran.error || tRef.current("auto.status.keeperDown");
         if (
@@ -272,8 +264,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
 
   const tick = useCallback(async () => {
     if (!prefsReady) return;
-    const st = await keeperStatus();
     const wallet = ownerRef.current;
+    const st = await keeperStatus(wallet ?? undefined);
     const configuredOwner =
       (typeof st.owner === "string" && st.owner.trim()) || null;
     const sameOwner =

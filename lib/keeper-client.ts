@@ -189,16 +189,18 @@ export async function keeperEnable(
   if (!r.data) {
     return {
       ok: false,
-      error:
-        r.status === 401 || r.status === 403
-          ? "signature_rejected"
-          : "keeper_unreachable",
+      error: r.status === 0 ? "keeper_unreachable" : `http_${r.status}`,
     };
   }
-  if (r.status === 401 || r.status === 403) {
+  if (!r.ok || r.status === 401 || r.status === 403) {
     return {
       ok: false,
-      error: r.data.error || r.data.detail || "signature_rejected",
+      error:
+        r.data.error ||
+        r.data.detail ||
+        (r.status === 401 || r.status === 403
+          ? "signature_rejected"
+          : `http_${r.status}`),
     };
   }
   return r.data;
@@ -230,26 +232,32 @@ export async function keeperDisable(
   if (!r.data) {
     return {
       ok: false,
-      error:
-        r.status === 401 || r.status === 403
-          ? "signature_rejected"
-          : "keeper_unreachable",
+      error: r.status === 0 ? "keeper_unreachable" : `http_${r.status}`,
     };
   }
-  if (r.status === 401 || r.status === 403) {
+  if (!r.ok || r.status === 401 || r.status === 403) {
     return {
       ok: false,
-      error: r.data.error || r.data.detail || "signature_rejected",
+      error:
+        r.data.error ||
+        r.data.detail ||
+        (r.status === 401 || r.status === 403
+          ? "signature_rejected"
+          : `http_${r.status}`),
     };
   }
   return r.data;
 }
 
 /**
- * Live keeper `/status` (public, redacted). Static Pages has no Next API fallback.
+ * Live keeper `/status` (public, redacted). Pass owner for per-wallet status.
  */
-export async function keeperStatus(): Promise<KeeperRunResult> {
-  const r = await keeperFetch("/status", { method: "GET" }, 8000);
+export async function keeperStatus(owner?: string): Promise<KeeperRunResult> {
+  const q =
+    owner && owner.trim()
+      ? `?owner=${encodeURIComponent(owner.trim())}`
+      : "";
+  const r = await keeperFetch(`/status${q}`, { method: "GET" }, 8000);
   if (r.data && r.status !== 0) {
     return { ...r.data, source: r.data.source ?? "daemon" };
   }
@@ -290,23 +298,31 @@ export async function keeperPushPrefs(
     15000,
   );
   if (!r.ok || !r.data) {
+    const detail =
+      (r.data && (r.data.error || r.data.detail)) ||
+      (r.status === 0 ? "keeper_unreachable" : undefined);
     return {
       ok: false,
       error:
-        r.status === 401 || r.status === 403
+        detail ||
+        (r.status === 401 || r.status === 403
           ? "signature_rejected"
-          : "keeper_unreachable",
+          : `http_${r.status || 0}`),
     };
   }
   const data = r.data as KeeperRunResult & { prefs?: KeeperPrefsPayload };
   return { ok: true, prefs: data.prefs };
 }
 
-export async function keeperGetPrefs(): Promise<{
+export async function keeperGetPrefs(owner?: string): Promise<{
   ok: boolean;
   prefs?: KeeperPrefsPayload;
 }> {
-  const r = await keeperFetch("/prefs", { method: "GET" }, 8000);
+  const q =
+    owner && owner.trim()
+      ? `?owner=${encodeURIComponent(owner.trim())}`
+      : "";
+  const r = await keeperFetch(`/prefs${q}`, { method: "GET" }, 8000);
   if (!r.ok || !r.data) return { ok: false };
   const data = r.data as KeeperRunResult & { prefs?: KeeperPrefsPayload };
   return { ok: true, prefs: data.prefs };

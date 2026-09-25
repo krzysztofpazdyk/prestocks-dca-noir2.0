@@ -13,7 +13,7 @@
  * Env: KEEPER_KEYPAIR  bot JSON array or path (default ~/.config/predca/keeper.json)
  *      PREDCA_OWNER    vault owner pubkey (the user's wallet, NOT a secret)
  *      NEXT_PUBLIC_RPC_URL / NEXT_PUBLIC_SOLANA_RPC, NEXT_PUBLIC_PREDCA_PROGRAM_ID, NEXT_PUBLIC_USDC_MINT
- *      KEEPER_TOKEN / NEXT_PUBLIC_KEEPER_TOKEN (optional; required for POST if set)
+ *      KEEPER_TOKEN (required for POST mutations; also ~/.config/predca/keeper.token)
  *      NEXT_PUBLIC_DCA_API_URL (optional ranking)
  */
 
@@ -28,6 +28,7 @@ import {
   writeSync,
   statSync,
   renameSync,
+  readdirSync,
 } from "node:fs";
 import http from "node:http";
 import { homedir } from "node:os";
@@ -101,13 +102,19 @@ function writeStatus(partial) {
         prev = {};
       }
     }
+    const enabledVal =
+      partial.enabled != null
+        ? partial.enabled
+        : partial.owner
+          ? readEnabled(partial.owner)
+          : listEnabledOwners().length > 0;
     writeFileSync(
       STATUS_PATH,
       JSON.stringify(
         {
           ...prev,
           ...partial,
-          enabled: readEnabled(),
+          enabled: enabledVal,
           updatedAt: new Date().toISOString(),
         },
         null,
@@ -135,20 +142,151 @@ function usdcMint() {
 }
 
 const DEFAULT_KEEPER_PATH = join(homedir(), ".config", "predca", "keeper.json");
-const OWNER_PATH = join(homedir(), ".config", "predca", "owner.txt");
-const ENABLED_PATH = join(homedir(), ".config", "predca", "enabled");
-const PREFS_PATH = join(homedir(), ".config", "predca", "prefs.json");
-const LOCK_PATH = join(homedir(), ".config", "predca", "buy.lock");
+const CONFIG_DIR = join(homedir(), ".config", "predca");
+const OWNERS_DIR = join(CONFIG_DIR, "owners");
+const LEGACY_OWNER_PATH = join(CONFIG_DIR, "owner.txt");
+const LEGACY_ENABLED_PATH = join(CONFIG_DIR, "enabled");
+const LEGACY_PREFS_PATH = join(CONFIG_DIR, "prefs.json");
+const SPEND_LIMITS_PATH = join(CONFIG_DIR, "spend-limits.json");
+const LOCK_PATH = join(CONFIG_DIR, "buy.lock");
 const KEEPER_PORT = Number(process.env.KEEPER_PORT || 8791);
 const LOCK_STALE_MS = 5 * 60 * 1000;
-const TOKEN_PATH = join(homedir(), ".config", "predca", "http_token");
+const TOKEN_PATH = join(CONFIG_DIR, "keeper.token");
+const TOKEN_PATH_LEGACY = join(CONFIG_DIR, "http_token");
+
+/** Per-owner storage: ~/.config/predca/owners/<pubkey>/{prefs.json,enabled,state.json} */
+function assertOwnerPubkey(pk) {
+  const s = String(pk || "").trim();
+  if (!s) throw new Error("missing owner pubkey");
+  // Validate base58 pubkey length / Solana PublicKey parse
+  try {
+    // eslint-disable-next-line no-new
+    new PublicKey(s);
+  } catch (e) {
+    throw new Error(`invalid owner pubkey: ${s}`);
+  }
+  return s;
+}
+
+function ownerDir(pk) {
+  return join(OWNERS_DIR, assertOwnerPubkey(pk));
+}
+
+function ownerPrefsPath(pk) {
+  return join(ownerDir(pk), "prefs.json");
+}
+
+function ownerEnabledPath(pk) {
+  return join(ownerDir(pk), "enabled");
+}
+
+function ownerStatePath(pk) {
+  return join(ownerDir(pk), "state.json");
+}
+
+function migrateLegacyOwnerOnce() {
+  try {
+    if (!existsSync(LEGACY_OWNER_PATH)) return null;
+    const pk = readFileSync(LEGACY_OWNER_PATH, "utf8").trim();
+    if (!pk) return null;
+    const dir = ownerDir(pk);
+    mkdirSync(dir, { recursive: true });
+    const marker = join(dir, ".migrated_from_legacy");
+    if (existsSync(marker)) return pk;
+    if (existsSync(LEGACY_PREFS_PATH) && !existsSync(ownerPrefsPath(pk))) {
+      writeFileSync(ownerPrefsPath(pk), readFileSync(LEGACY_PREFS_PATH), { mode: 0o600 });
+    }
+    if (existsSync(LEGACY_ENABLED_PATH) && !existsSync(ownerEnabledPath(pk))) {
+      writeFileSync(ownerEnabledPath(pk), readFileSync(LEGACY_ENABLED_PATH));
+    }
+    writeFileSync(marker, new Date().toISOString() + "\n");
+    log("migrated legacy global owner into", dir);
+    return pk;
+  } catch (e) {
+    log("legacy migrate skipped", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+function listOwnerPubkeys() {
+  if (!existsSync(OWNERS_DIR)) return [];
+  const out = [];
+  for (const ent of readdirSync(OWNERS_DIR, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    try {
+      assertOwnerPubkey(ent.name);
+      out.push(ent.name);
+    } catch {
+      /* skip non-pubkey dirs */
+    }
+  }
+  return out;
+}
+
+function listEnabledOwners() {
+  return listOwnerPubkeys().filter((pk) => readEnabled(pk));
+}
+
+function loadSpendLimits() {
+  let fileLimits = {};
+  if (existsSync(SPEND_LIMITS_PATH)) {
+    try {
+      const parsed = JSON.parse(readFileSync(SPEND_LIMITS_PATH, "utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("spend-limits.json must contain a JSON object");
+      }
+      fileLimits = parsed;
+    } catch (e) {
+      throw new Error(
+        `Nie można odczytać limitów wydatków (${SPEND_LIMITS_PATH}): ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
+  const readLimit = (key, envKey, fallback) => {
+    const raw = fileLimits[key] ?? process.env[envKey] ?? fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`Nieprawidłowy limit wydatków ${key}: ${String(raw)}`);
+    }
+    return value;
+  };
+  return {
+    start_usd: readLimit("start_usd", "KEEPER_START_USD", 1),
+    max_usd: readLimit("max_usd", "KEEPER_MAX_SPEND_USD", 10),
+    path: SPEND_LIMITS_PATH,
+  };
+}
+
+function enforceSpendLimits(budgetUsd, totalDebit, limits) {
+  const exceeded = [];
+  if (budgetUsd > limits.max_usd) {
+    exceeded.push(`weekly budget $${budgetUsd.toFixed(6)} > max_usd $${limits.max_usd.toFixed(6)}`);
+  }
+  if (totalDebit > limits.max_usd) {
+    exceeded.push(`total debit $${totalDebit.toFixed(6)} > max_usd $${limits.max_usd.toFixed(6)}`);
+  }
+  if (!exceeded.length) return;
+  const msg = `Spending limit exceeded; execute_buy blocked: ${exceeded.join("; ")}`;
+  writeStatus({
+    phase: "spend_limit",
+    error: msg,
+    budgetUsd,
+    totalDebit,
+    spendLimits: limits,
+  });
+  throw new Error(msg);
+}
 
 function expectedKeeperToken() {
-  return (
-    process.env.KEEPER_TOKEN?.trim() ||
-    process.env.NEXT_PUBLIC_KEEPER_TOKEN?.trim() ||
-    (existsSync(TOKEN_PATH) ? readFileSync(TOKEN_PATH, "utf8").trim() : "")
-  );
+  const fromEnv = process.env.KEEPER_TOKEN?.trim() || "";
+  if (fromEnv) return fromEnv;
+  for (const p of [TOKEN_PATH, TOKEN_PATH_LEGACY]) {
+    if (existsSync(p)) {
+      const v = readFileSync(p, "utf8").trim();
+      if (v) return v;
+    }
+  }
+  return "";
 }
 
 function isLocalOrigin(origin) {
@@ -168,31 +306,73 @@ function corsHeaders(req) {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Keeper-Token",
+    "Access-Control-Allow-Headers": "Content-Type, X-Keeper-Token, Authorization",
     Vary: "Origin",
   };
 }
 
-/** Mutating routes: require token when one is configured. */
-function authorizeMutating(req) {
-  const expected = expectedKeeperToken();
-  if (!expected) return true;
-  const got = String(req.headers["x-keeper-token"] || "").trim();
-  return got === expected;
+/** Mutating routes: fail-closed — require configured token (header or Bearer). */
+function extractPresentedToken(req) {
+  const headerTok = String(req.headers["x-keeper-token"] || "").trim();
+  if (headerTok) return headerTok;
+  const auth = String(req.headers["authorization"] || "").trim();
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  return m ? m[1].trim() : "";
 }
 
-function readEnabled() {
+function authorizeMutating(req) {
+  const expected = expectedKeeperToken();
+  if (!expected) return false; // fail-closed: no token configured → refuse mutations
+  const got = extractPresentedToken(req);
+  return Boolean(got) && got === expected;
+}
+
+function readEnabled(owner) {
+  if (!owner) return false;
   try {
-    if (!existsSync(ENABLED_PATH)) return false;
-    return readFileSync(ENABLED_PATH, "utf8").trim() === "true";
+    const p = ownerEnabledPath(owner);
+    if (!existsSync(p)) return false;
+    return readFileSync(p, "utf8").trim() === "true";
   } catch {
     return false;
   }
 }
 
-function writeEnabled(value) {
-  mkdirSync(dirname(ENABLED_PATH), { recursive: true });
-  writeFileSync(ENABLED_PATH, value ? "true\n" : "false\n");
+function writeEnabled(owner, value) {
+  const p = ownerEnabledPath(owner);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, value ? "true\n" : "false\n");
+}
+
+function readOwnerState(owner) {
+  try {
+    const p = ownerStatePath(owner);
+    if (!existsSync(p)) return {};
+    return JSON.parse(readFileSync(p, "utf8")) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeOwnerState(owner, partial) {
+  try {
+    const p = ownerStatePath(owner);
+    mkdirSync(dirname(p), { recursive: true });
+    const prev = readOwnerState(owner);
+    const next = {
+      ...prev,
+      ...partial,
+      owner: assertOwnerPubkey(owner),
+      enabled: partial.enabled != null ? partial.enabled : readEnabled(owner),
+      updatedAt: new Date().toISOString(),
+    };
+    const tmp = p + ".tmp." + process.pid;
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
+    renameSync(tmp, p);
+    return next;
+  } catch {
+    return null;
+  }
 }
 
 async function withBuyLock(fn) {
@@ -264,17 +444,21 @@ function loadKeeper() {
 }
 
 function persistOwner(pk) {
-  mkdirSync(dirname(OWNER_PATH), { recursive: true });
-  writeFileSync(OWNER_PATH, pk.trim() + "\n", { mode: 0o600 });
+  const owner = assertOwnerPubkey(pk);
+  mkdirSync(ownerDir(owner), { recursive: true });
+  return owner;
 }
 
+/** CLI / env fallback (single-shot). Daemon HTTP always passes owner explicitly. */
 function loadOwnerPubkey() {
   const raw = (process.env.PREDCA_OWNER || "").trim();
   if (raw) return new PublicKey(raw);
-  if (existsSync(OWNER_PATH)) {
-    const fromFile = readFileSync(OWNER_PATH, "utf8").trim();
+  if (existsSync(LEGACY_OWNER_PATH)) {
+    const fromFile = readFileSync(LEGACY_OWNER_PATH, "utf8").trim();
     if (fromFile) return new PublicKey(fromFile);
   }
+  const enabled = listEnabledOwners();
+  if (enabled.length === 1) return new PublicKey(enabled[0]);
   throw new Error(
     "Ustaw PREDCA_OWNER na pubkey portfela z vaultem Predca (adres publiczny, nie klucz prywatny).",
   );
@@ -375,8 +559,8 @@ async function fetchJson(url, init = {}, timeoutMs = 20000) {
 }
 
 
-/** Rank prefs for keeper /rank body. localStorage is unavailable here. */
-function readKeeperRankPrefs() {
+/** Rank prefs for keeper /rank body. Per-owner when owner provided. */
+function readKeeperRankPrefs(owner) {
   const envFlag = (name, fallback) => {
     const v = (process.env[name] || "").trim().toLowerCase();
     if (!v) return fallback;
@@ -384,8 +568,13 @@ function readKeeperRankPrefs() {
   };
   let filePrefs = {};
   try {
-    if (existsSync(PREFS_PATH)) {
-      filePrefs = JSON.parse(readFileSync(PREFS_PATH, "utf8")) || {};
+    const prefsFile = owner
+      ? ownerPrefsPath(owner)
+      : existsSync(LEGACY_PREFS_PATH)
+        ? LEGACY_PREFS_PATH
+        : null;
+    if (prefsFile && existsSync(prefsFile)) {
+      filePrefs = JSON.parse(readFileSync(prefsFile, "utf8")) || {};
     }
   } catch {
     /* ignore */
@@ -474,20 +663,23 @@ function normalizeKeeperPrefs(raw = {}) {
   };
 }
 
-/** Atomic write of ~/.config/predca/prefs.json (UI → keeper sync). */
-function writeKeeperRankPrefs(raw) {
+/** Atomic write of per-owner prefs.json (UI → keeper sync). */
+function writeKeeperRankPrefs(owner, raw) {
+  if (!owner) throw new Error("writeKeeperRankPrefs requires owner");
   const normalized = normalizeKeeperPrefs(raw);
-  mkdirSync(dirname(PREFS_PATH), { recursive: true });
-  const tmp = PREFS_PATH + ".tmp." + process.pid;
+  const prefsFile = ownerPrefsPath(owner);
+  mkdirSync(dirname(prefsFile), { recursive: true });
+  const tmp = prefsFile + ".tmp." + process.pid;
   writeFileSync(tmp, JSON.stringify(normalized, null, 2) + "\n", { mode: 0o600 });
-  renameSync(tmp, PREFS_PATH);
+  renameSync(tmp, prefsFile);
   return normalized;
 }
 
-/** If prefs.json missing at daemon start, seed defaults matching rank-prefs / Settings. */
-function ensurePrefsDefaults() {
-  if (existsSync(PREFS_PATH)) return readKeeperRankPrefs();
-  return writeKeeperRankPrefs({
+/** Seed defaults for one owner if missing. */
+function ensureOwnerPrefsDefaults(owner) {
+  const prefsFile = ownerPrefsPath(owner);
+  if (existsSync(prefsFile)) return readKeeperRankPrefs(owner);
+  return writeKeeperRankPrefs(owner, {
     exclusions: ["xAI"],
     deadlines_unimportant: false,
     premiums_matter: false,
@@ -496,7 +688,25 @@ function ensurePrefsDefaults() {
   });
 }
 
-async function rankTop3() {
+/** Daemon boot: migrate legacy + ensure any existing owners have prefs. */
+function ensurePrefsDefaults() {
+  migrateLegacyOwnerOnce();
+  const owners = listOwnerPubkeys();
+  if (!owners.length) {
+    return {
+      exclusions: ["xAI"],
+      deadlines_unimportant: false,
+      premiums_matter: false,
+      premiums_especially_near_ipo: false,
+      buy_despite_ipo: false,
+    };
+  }
+  let last = null;
+  for (const o of owners) last = ensureOwnerPrefsDefaults(o);
+  return last;
+}
+
+async function rankTop3(owner) {
   const base = (process.env.NEXT_PUBLIC_DCA_API_URL || "").replace(/\/$/, "");
   if (base) {
     try {
@@ -505,7 +715,7 @@ async function rankTop3() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify(readKeeperRankPrefs()),
+          body: JSON.stringify(readKeeperRankPrefs(owner)),
         },
         60000,
       );
@@ -539,7 +749,7 @@ async function rankTop3() {
     products = snap.products || [];
   }
 
-  const prefs = readKeeperRankPrefs();
+  const prefs = readKeeperRankPrefs(owner);
   const productDeadlineInvalid = (p) => {
     const boolKeys = [
       "deadline_invalid",
@@ -649,12 +859,17 @@ async function ensureAtas(connection, owner, mints, payer) {
 
 async function runOnce(opts) {
   const force = Boolean(opts.force);
-  if (opts.requireEnabled !== false && !readEnabled()) {
-    writeStatus({ phase: "off", enabled: false });
-    return { ok: true, skipped: true, reason: "off", enabled: false };
+  const spendLimits = loadSpendLimits();
+  const owner = opts.owner
+    ? new PublicKey(assertOwnerPubkey(opts.owner))
+    : loadOwnerPubkey();
+  const ownerStr = owner.toBase58();
+  if (opts.requireEnabled !== false && !readEnabled(ownerStr)) {
+    writeStatus({ phase: "off", enabled: false, owner: ownerStr });
+    writeOwnerState(ownerStr, { phase: "off", enabled: false });
+    return { ok: true, skipped: true, reason: "off", enabled: false, owner: ownerStr };
   }
   const keeper = loadKeeper();
-  const owner = loadOwnerPubkey();
   const pid = programId();
   const mint = usdcMint();
   const connection = new Connection(rpcUrl(), {
@@ -675,10 +890,12 @@ async function runOnce(opts) {
   log("rpc", rpcUrl());
   writeStatus({
     keeper: keeper.publicKey.toBase58(),
-    owner: owner.toBase58(),
-    rpc: rpcUrl(),
+    owner: ownerStr,
+    rpc: /devnet/i.test(rpcUrl()) ? "devnet" : "redacted",
     phase: "checking",
+    spendLimits,
   });
+  writeOwnerState(ownerStr, { phase: "checking", keeper: keeper.publicKey.toBase58() });
   if (keeperSol < 0.01) {
     throw new Error(
       `Keeper ma za mało SOL na opłaty (${keeperSol.toFixed(4)}). Doładuj 0.05–0.2 SOL na ${keeper.publicKey.toBase58()}.`,
@@ -707,7 +924,8 @@ async function runOnce(opts) {
     const nextAt = new Date(lastMs + WEEK_MS).toISOString();
     log("not due; next", nextAt);
     writeStatus({ phase: "not_due", lastRunTs: lastTs, nextAt });
-    return { skipped: true, reason: "not_due", nextAt };
+    writeOwnerState(ownerStr, { phase: "not_due", nextAt, lastRunTs: lastTs });
+    return { skipped: true, reason: "not_due", nextAt, owner: ownerStr, enabled: true };
   }
 
   const [vault] = vaultPda(owner, pid);
@@ -722,13 +940,14 @@ async function runOnce(opts) {
   const budgetUsd = budgetRaw / 1e6;
   const amountEach = Math.floor(budgetRaw / 3) / 1e6;
   const totalDebit = amountEach * 3;
+  enforceSpendLimits(budgetUsd, totalDebit, spendLimits);
   if (!Number.isFinite(vaultUi) || vaultUi < totalDebit) {
     const msg = `Za mało USDC w vault: ${vaultUi.toFixed(2)} < ${totalDebit.toFixed(2)}.`;
     writeStatus({ phase: "vault_low", error: msg, vaultUsdc: vaultUi, need: totalDebit });
     throw new Error(msg);
   }
 
-  const ranked = await rankTop3();
+  const ranked = await rankTop3(ownerStr);
   log("rank", ranked.source, ranked.names.join(" · "));
   const { mints, names, missing } = resolveTop3(ranked.names);
   if (missing.length || mints.length !== 3) {
@@ -748,6 +967,10 @@ async function runOnce(opts) {
     writeStatus({ phase: "not_due", lastRunTs: lastTs2, nextAt });
     return { skipped: true, reason: "not_due", nextAt, enabled: true };
   }
+  const budgetUsd2 = bnToNumber(cfg.weeklyBudgetUsdc) / 1e6;
+  const amountEach2 = Math.floor(bnToNumber(cfg.weeklyBudgetUsdc) / 3) / 1e6;
+  const totalDebit2 = amountEach2 * 3;
+  enforceSpendLimits(budgetUsd2, totalDebit2, loadSpendLimits());
 
   const runIndex = await nextRunIndex(program, owner, pid);
   await ensureAtas(connection, owner, mints, keeper);
@@ -782,7 +1005,15 @@ async function runOnce(opts) {
     runIndex,
     error: null,
   });
-  return { skipped: false, signature: sig, names, amountUsd: totalDebit, runIndex };
+  writeOwnerState(ownerStr, {
+    phase: "ok",
+    signature: sig,
+    names,
+    amountUsd: totalDebit,
+    runIndex,
+    enabled: true,
+  });
+  return { skipped: false, signature: sig, names, amountUsd: totalDebit, runIndex, owner: ownerStr, enabled: true };
 }
 
 function parseArgs(argv) {
@@ -819,6 +1050,15 @@ function json(res, req, status, body) {
   res.end(payload);
 }
 
+function parseReqUrl(req) {
+  try {
+    const u = new URL(req.url || "/", "http://127.0.0.1");
+    return { path: u.pathname, query: Object.fromEntries(u.searchParams.entries()) };
+  } catch {
+    return { path: req.url?.split("?")[0] ?? "/", query: {} };
+  }
+}
+
 function startKeeperHttp() {
   const server = http.createServer(async (req, res) => {
     if (req.method === "OPTIONS") {
@@ -826,43 +1066,81 @@ function startKeeperHttp() {
       res.end();
       return;
     }
-    const url = req.url?.split("?")[0] ?? "/";
+    const { path: url, query } = parseReqUrl(req);
     try {
       if (req.method === "GET" && url === "/health") {
+        const enabledOwners = listEnabledOwners();
         json(res, req, 200, {
           ok: true,
           pid: process.pid,
-          enabled: readEnabled(),
+          enabled: enabledOwners.length > 0,
+          enabledCount: enabledOwners.length,
           daemon: true,
+          multiUser: true,
           port: KEEPER_PORT,
           program: programId().toBase58(),
+          spendLimits: loadSpendLimits(),
         });
         return;
       }
       if (req.method === "GET" && url === "/status") {
-        let extra = {};
-        try {
-          if (existsSync(STATUS_PATH)) {
-            extra = JSON.parse(readFileSync(STATUS_PATH, "utf8"));
+        const rpcRaw = rpcUrl();
+        const rpcRedacted = /devnet/i.test(rpcRaw)
+          ? "devnet"
+          : /mainnet/i.test(rpcRaw)
+            ? "mainnet-redacted"
+            : "redacted";
+        const spend = loadSpendLimits();
+        const spendPublic = { start_usd: spend.start_usd, max_usd: spend.max_usd };
+        const qOwner = (query.owner || "").trim();
+        if (qOwner) {
+          let owner;
+          try {
+            owner = assertOwnerPubkey(qOwner);
+          } catch (e) {
+            json(res, req, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+            return;
           }
-        } catch {
-          extra = {};
+          const state = readOwnerState(owner);
+          let prefs = {};
+          try {
+            prefs = readKeeperRankPrefs(owner);
+          } catch {
+            prefs = {};
+          }
+          json(res, req, 200, {
+            ok: true,
+            ...state,
+            owner,
+            enabled: readEnabled(owner),
+            daemon: true,
+            multiUser: true,
+            port: KEEPER_PORT,
+            program: programId().toBase58(),
+            rpc: rpcRedacted,
+            prefs,
+            spendLimits: spendPublic,
+          });
+          return;
         }
-        let prefs = {};
-        try {
-          prefs = readKeeperRankPrefs();
-        } catch {
-          prefs = {};
-        }
+        // Summary only — no other users' prefs/secrets
+        const owners = listOwnerPubkeys().map((o) => ({
+          owner: o,
+          enabled: readEnabled(o),
+          phase: readOwnerState(o).phase || null,
+        }));
+        const enabledOwners = owners.filter((o) => o.enabled);
         json(res, req, 200, {
           ok: true,
-          ...extra,
-          enabled: readEnabled(),
           daemon: true,
+          multiUser: true,
+          enabled: enabledOwners.length > 0,
+          enabledCount: enabledOwners.length,
+          owners,
           port: KEEPER_PORT,
           program: programId().toBase58(),
-          rpc: rpcUrl(),
-          prefs,
+          rpc: rpcRedacted,
+          spendLimits: spendPublic,
         });
         return;
       }
@@ -878,6 +1156,7 @@ function startKeeperHttp() {
           return;
         }
         persistOwner(owner);
+        ensureOwnerPrefsDefaults(owner);
         log("registered owner", owner);
         json(res, req, 200, { ok: true, owner });
         return;
@@ -902,18 +1181,22 @@ function startKeeperHttp() {
           body.exclusions != null
         ) {
           const prefsRaw = body.prefs && typeof body.prefs === "object" ? body.prefs : body;
-          writeKeeperRankPrefs(prefsRaw);
-          log("synced prefs on enable", readKeeperRankPrefs());
+          writeKeeperRankPrefs(owner, prefsRaw);
+          log("synced prefs on enable", owner, readKeeperRankPrefs(owner));
+        } else {
+          ensureOwnerPrefsDefaults(owner);
         }
-        writeEnabled(true);
+        writeEnabled(owner, true);
+        writeOwnerState(owner, { phase: "enabled", enabled: true });
         log("enabled keeper for", owner, "force", body.force !== false);
         const result = await withBuyLock(() =>
           runOnce({
             force: body.force !== false,
             requireEnabled: false,
+            owner,
           }),
         );
-        json(res, req, 200, { ok: !result.error, enabled: true, ...result });
+        json(res, req, 200, { ok: !result.error, enabled: true, owner, ...result });
         return;
       }
       if (req.method === "POST" && url === "/disable") {
@@ -921,10 +1204,18 @@ function startKeeperHttp() {
           json(res, req, 401, { ok: false, error: "unauthorized" });
           return;
         }
-        writeEnabled(false);
-        log("disabled keeper");
-        writeStatus({ phase: "off", enabled: false });
-        json(res, req, 200, { ok: true, enabled: false, skipped: true, reason: "off" });
+        const body = await readJsonBody(req);
+        const owner = String(body.owner ?? "").trim();
+        if (!owner) {
+          json(res, req, 400, { ok: false, error: "missing owner pubkey" });
+          return;
+        }
+        persistOwner(owner);
+        writeEnabled(owner, false);
+        log("disabled keeper for", owner);
+        writeOwnerState(owner, { phase: "off", enabled: false });
+        writeStatus({ phase: "off", enabled: false, owner });
+        json(res, req, 200, { ok: true, enabled: false, owner, skipped: true, reason: "off" });
         return;
       }
       if (req.method === "POST" && url === "/run") {
@@ -932,19 +1223,37 @@ function startKeeperHttp() {
           json(res, req, 401, { ok: false, error: "unauthorized" });
           return;
         }
-        if (!readEnabled()) {
-          json(res, req, 200, { ok: true, skipped: true, reason: "off", enabled: false });
+        const body = await readJsonBody(req);
+        const owner = String(body.owner ?? "").trim();
+        if (!owner) {
+          json(res, req, 400, { ok: false, error: "missing owner pubkey" });
           return;
         }
-        const body = await readJsonBody(req);
+        if (!readEnabled(owner)) {
+          json(res, req, 200, { ok: true, skipped: true, reason: "off", enabled: false, owner });
+          return;
+        }
         const result = await withBuyLock(() =>
-          runOnce({ force: Boolean(body.force) }),
+          runOnce({ force: Boolean(body.force), owner }),
         );
-        json(res, req, 200, { ok: true, enabled: true, ...result });
+        json(res, req, 200, { ok: true, enabled: true, owner, ...result });
         return;
       }
       if (req.method === "GET" && url === "/prefs") {
-        json(res, req, 200, { ok: true, prefs: readKeeperRankPrefs() });
+        const qOwner = (query.owner || "").trim();
+        if (qOwner) {
+          let owner;
+          try {
+            owner = assertOwnerPubkey(qOwner);
+          } catch (e) {
+            json(res, req, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+            return;
+          }
+          json(res, req, 200, { ok: true, owner, prefs: readKeeperRankPrefs(owner) });
+          return;
+        }
+        // Backward-compatible: legacy global prefs or empty defaults
+        json(res, req, 200, { ok: true, prefs: readKeeperRankPrefs(null) });
         return;
       }
       if (req.method === "POST" && url === "/prefs") {
@@ -953,9 +1262,18 @@ function startKeeperHttp() {
           return;
         }
         const body = await readJsonBody(req);
-        const prefs = writeKeeperRankPrefs(body.prefs && typeof body.prefs === "object" ? body.prefs : body);
-        log("prefs updated", prefs);
-        json(res, req, 200, { ok: true, prefs });
+        const owner = String(body.owner ?? "").trim();
+        if (!owner) {
+          json(res, req, 400, { ok: false, error: "missing owner pubkey" });
+          return;
+        }
+        persistOwner(owner);
+        const prefs = writeKeeperRankPrefs(
+          owner,
+          body.prefs && typeof body.prefs === "object" ? body.prefs : body,
+        );
+        log("prefs updated", owner, prefs);
+        json(res, req, 200, { ok: true, owner, prefs });
         return;
       }
       json(res, req, 404, { ok: false, error: "not found" });
@@ -974,29 +1292,38 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.daemon) {
     log("daemon start; tick every", TICK_MS / 60000, "min");
+    const spendLimits = loadSpendLimits();
+    log("spend limits", spendLimits);
     const seededPrefs = ensurePrefsDefaults();
-    log("prefs", seededPrefs);
+    log("prefs seed", seededPrefs);
+    log("owners", listOwnerPubkeys());
     writeStatus({
       phase: "daemon",
       pid: process.pid,
       daemon: true,
+      multiUser: true,
       port: KEEPER_PORT,
       program: programId().toBase58(),
-      rpc: rpcUrl(),
-      prefs: seededPrefs,
+      rpc: /devnet/i.test(rpcUrl()) ? "devnet" : "redacted",
+      enabledCount: listEnabledOwners().length,
+      spendLimits,
     });
     startKeeperHttp();
     const tick = async (force) => {
-      if (!readEnabled()) {
-        writeStatus({ phase: "off", enabled: false });
+      const enabled = listEnabledOwners();
+      if (!enabled.length) {
+        writeStatus({ phase: "off", enabled: false, enabledCount: 0 });
         return;
       }
-      try {
-        await withBuyLock(() => runOnce({ force }));
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        log("tick error", msg);
-        writeStatus({ phase: "error", error: msg });
+      for (const owner of enabled) {
+        try {
+          await withBuyLock(() => runOnce({ force, owner }));
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          log("tick error", owner, msg);
+          writeOwnerState(owner, { phase: "error", error: msg });
+          writeStatus({ phase: "error", error: msg, owner });
+        }
       }
     };
     await tick(false);
