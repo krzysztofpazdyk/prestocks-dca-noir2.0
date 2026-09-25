@@ -303,6 +303,8 @@ export function OverviewView() {
     availableVaultUsdc == null ||
     !Number.isFinite(availableVaultUsdc) ||
     availableVaultUsdc < purchaseAmount;
+  // Manual Buy must NOT disable because keeper/auto-buy phase is "buying".
+  // Only user's own txPending / missing recs / vault low / not ready.
   const purchaseDisabled =
     top3.length === 0 ||
     predca.txPending ||

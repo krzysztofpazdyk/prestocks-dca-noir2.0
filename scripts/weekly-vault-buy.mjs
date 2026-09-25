@@ -252,7 +252,7 @@ function loadSpendLimits() {
   };
   return {
     start_usd: readLimit("start_usd", "KEEPER_START_USD", 1),
-    max_usd: readLimit("max_usd", "KEEPER_MAX_SPEND_USD", 10),
+    max_usd: readLimit("max_usd", "KEEPER_MAX_SPEND_USD", 1_000_000),
     path: SPEND_LIMITS_PATH,
   };
 }
@@ -923,8 +923,8 @@ async function runOnce(opts) {
   if (!force && lastMs > 0 && now - lastMs < WEEK_MS) {
     const nextAt = new Date(lastMs + WEEK_MS).toISOString();
     log("not due; next", nextAt);
-    writeStatus({ phase: "not_due", lastRunTs: lastTs, nextAt });
-    writeOwnerState(ownerStr, { phase: "not_due", nextAt, lastRunTs: lastTs });
+    writeStatus({ phase: "not_due", lastRunTs: lastTs, nextAt, error: null });
+    writeOwnerState(ownerStr, { phase: "not_due", nextAt, lastRunTs: lastTs, error: null });
     return { skipped: true, reason: "not_due", nextAt, owner: ownerStr, enabled: true };
   }
 
@@ -944,6 +944,12 @@ async function runOnce(opts) {
   if (!Number.isFinite(vaultUi) || vaultUi < totalDebit) {
     const msg = `Za mało USDC w vault: ${vaultUi.toFixed(2)} < ${totalDebit.toFixed(2)}.`;
     writeStatus({ phase: "vault_low", error: msg, vaultUsdc: vaultUi, need: totalDebit });
+    writeOwnerState(ownerStr, {
+      phase: "vault_low",
+      error: msg,
+      vaultUsdc: vaultUi,
+      need: totalDebit,
+    });
     throw new Error(msg);
   }
 
@@ -1013,6 +1019,7 @@ async function runOnce(opts) {
     amountUsd: totalDebit,
     runIndex,
     enabled: true,
+    error: null,
   });
   return { skipped: false, signature: sig, names, amountUsd: totalDebit, runIndex, owner: ownerStr, enabled: true };
 }
@@ -1187,9 +1194,10 @@ function startKeeperHttp() {
         } else {
           ensureOwnerPrefsDefaults(owner);
         }
-        writeEnabled(owner, true);
-        writeOwnerState(owner, { phase: "enabled", enabled: true });
-        log("enabled keeper for", owner, "force", body.force !== false);
+        // Do not leave enabled=true unless a real purchase commits below.
+        writeEnabled(owner, false);
+        writeOwnerState(owner, { phase: "enabling", enabled: false, error: null });
+        log("enable attempt for", owner, "force", body.force !== false);
         let result;
         try {
           result = await withBuyLock(() =>
@@ -1201,33 +1209,84 @@ function startKeeperHttp() {
           );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          log("enable force-buy error (still enabled)", owner, msg);
-          const tooSoon =
-            /TooSoon/i.test(msg) || /\b6008\b/.test(msg) || /0x177[08]/i.test(msg);
-          const nextAt = new Date(Date.now() + WEEK_MS).toISOString();
-          if (tooSoon) {
-            writeOwnerState(owner, {
-              phase: "not_due",
-              enabled: true,
-              nextAt,
-              error: null,
-            });
-            writeStatus({ phase: "not_due", enabled: true, owner, nextAt });
-          } else {
-            writeOwnerState(owner, { phase: "error", enabled: true, error: msg });
-          }
+          log("enable force-buy error → disabled", owner, msg);
+          writeEnabled(owner, false);
+          writeOwnerState(owner, { phase: "error", enabled: false, error: msg });
+          writeStatus({ phase: "error", enabled: false, owner, error: msg });
           json(res, req, 200, {
-            ok: true,
-            enabled: true,
+            ok: false,
+            enabled: false,
             owner,
             skipped: true,
             reason: "buy_error",
             error: msg,
-            ...(tooSoon ? { nextAt } : {}),
           });
           return;
         }
-        json(res, req, 200, { ok: !result.error, enabled: true, owner, ...result });
+        if (result && result.skipped && result.reason === "busy") {
+          // Busy-only: do not commit enabled; client may retry.
+          writeEnabled(owner, false);
+          writeOwnerState(owner, { phase: "buying", enabled: false, error: null });
+          writeStatus({ phase: "buying", enabled: false, owner, error: null });
+          json(res, req, 200, {
+            ok: true,
+            enabled: false,
+            owner,
+            skipped: true,
+            reason: "busy",
+          });
+          return;
+        }
+        if (
+          !result ||
+          result.skipped ||
+          result.error ||
+          !result.signature ||
+          !result.names ||
+          result.names.length < 3
+        ) {
+          const msg = String(
+            (result && (result.error || result.reason)) ||
+              "enable did not complete a purchase",
+          );
+          log("enable skipped/incomplete → disabled", owner, msg);
+          writeEnabled(owner, false);
+          writeOwnerState(owner, { phase: "error", enabled: false, error: msg });
+          writeStatus({ phase: "error", enabled: false, owner, error: msg });
+          json(res, req, 200, {
+            ok: false,
+            enabled: false,
+            owner,
+            skipped: true,
+            reason: (result && result.reason) || "buy_error",
+            error: msg,
+          });
+          return;
+        }
+        writeEnabled(owner, true);
+        writeOwnerState(owner, {
+          phase: "ok",
+          enabled: true,
+          error: null,
+          signature: result.signature,
+          names: result.names,
+          amountUsd: result.amountUsd,
+        });
+        writeStatus({
+          phase: "ok",
+          enabled: true,
+          owner,
+          error: null,
+          signature: result.signature,
+          names: result.names,
+          amountUsd: result.amountUsd,
+        });
+        json(res, req, 200, {
+          ok: true,
+          enabled: true,
+          owner,
+          ...result,
+        });
         return;
       }
       if (req.method === "POST" && url === "/disable") {

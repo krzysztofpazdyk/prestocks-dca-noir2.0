@@ -400,12 +400,11 @@ export function SettingsView() {
           <input
             type="number"
             min={1}
-            max={10}
             step={1}
             value={weekly}
             onChange={(e) => {
               const n = Number(e.target.value);
-              setWeekly(Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 1);
+              setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
               predca.clearMessages();
             }}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
