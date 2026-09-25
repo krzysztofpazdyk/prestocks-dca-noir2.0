@@ -1,0 +1,62 @@
+{
+  "cluster": "devnet",
+  "usdc_mint": "99UbouJx2ZTLThQkqxrQGLZkDAYAn9vv8n6qnQh5f4Sw",
+  "mint_authority_pda": "8rLFWJLS2u25dSXrEsaxvDe2umg6hyzTCP91LKvYHe1u",
+  "program_id": "HajLzgcp6fyHVgVLFtwujnU53re47PSMJcQZZes8ZvbU",
+  "decimals": 6,
+  "mints": [
+    {
+      "name": "SpaceX",
+      "mint": "BdgMgZMNjuDnNbqQWXePAx5XhtkzMmyEx1dYBdezA7Ez",
+      "symbol": "SPACEX"
+    },
+    {
+      "name": "Anthropic",
+      "mint": "2yqHN6bCAJZHngGuRnuTKBB43F2S6GGLAJqgwZ4WVXT1",
+      "symbol": "ANTHROPIC"
+    },
+    {
+      "name": "Anduril",
+      "mint": "3EV3AmLvT38ttTaYJdTYg2oR32rM3GZZHFFr2zByky52",
+      "symbol": "ANDURIL"
+    },
+    {
+      "name": "OpenAI",
+      "mint": "31oc45vupHAFmxs9LzwG9z1RcMGUypRBZxvwZEga3dC9",
+      "symbol": "OPENAI"
+    },
+    {
+      "name": "Neuralink",
+      "mint": "5Uyshjsz9nh3q15mBy2KcximwTsT7do7xhwcv2WqEuBP",
+      "symbol": "NEURALINK"
+    },
+    {
+      "name": "Figure AI",
+      "mint": "F4zN87F1Pcz4etSBL2QmehrjQ2A5E94T8sSYi4j63KDx",
+      "symbol": "FIGUREAI",
+      "aliases": [
+        "FigureAI",
+        "FIGUREAI",
+        "Figure Ai"
+      ]
+    },
+    {
+      "name": "Kalshi",
+      "mint": "ibWmc5V4LfcM4rGnh7nsNFVixsfSMFwhHWjUHDe13zY",
+      "symbol": "KALSHI"
+    },
+    {
+      "name": "Polymarket",
+      "mint": "7t9CoqXDVb3j7aRHFqa5BVuXz8p7CCUDatGMa275yPe7",
+      "symbol": "POLYMARKET"
+    }
+  ],
+  "simulate_buy": {
+    "usdc_source": "vault_pda_only",
+    "note": "Burn floor(weekly_budget/3)*3 mock USDC from vault PDA only; owner USDC ATA is never the spend source",
+    "amount_each": "weekly_budget_usdc // 3",
+    "total_debit": "amount_each * 3 (remainder stays in vault)"
+  },
+  "universe_note": "Active PreStocks from API excluding xAI; display name 'Figure AI' aliases FigureAI/FIGUREAI for UI universe.ts keys",
+  "name_lookup": "case-insensitive; spaces ignored (Figure AI == FigureAI == FIGUREAI)"
+}

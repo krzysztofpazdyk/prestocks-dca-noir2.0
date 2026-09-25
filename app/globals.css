@@ -1,0 +1,44 @@
+@import "@solana/wallet-adapter-react-ui/styles.css";
+@import "tailwindcss";
+
+:root {
+  --background: #0c0e12;
+  --foreground: #e8eef5;
+  --panel: #141820;
+  --panel-border: #1e2633;
+  --accent-teal: #2dd4bf;
+  --accent-violet: #a78bfa;
+  --muted: #8b95a8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.wallet-adapter-button {
+  background: linear-gradient(135deg, #134e4a, #4c1d95) !important;
+  border: 1px solid #2dd4bf55 !important;
+  font-family: var(--font-geist-mono), monospace !important;
+  height: 36px !important;
+  font-size: 13px !important;
+}
+
+.wallet-adapter-button:not([disabled]):hover {
+  background: linear-gradient(135deg, #0f766e, #6d28d9) !important;
+}
+
+.mono-num {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
