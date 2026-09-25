@@ -87,8 +87,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   enabledRef.current = enabled;
   const tRef = useRef(t);
   tRef.current = t;
-  const localeRef = useRef(locale);
-  localeRef.current = locale;
   const ignoreOffUntilRef = useRef(0);
 
   useEffect(() => {
@@ -219,43 +217,21 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       writeAutoWeeklyBuy(true);
       if (ran.skipped) {
         if (ran.reason === "busy") {
-          throw new Error("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
+          setPhase("buying");
+          setMessage("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
+          return;
         }
-        // Secondary UX: enable stays ON if force-buy hit TooSoon (manual buy cooldown).
-        // Primary path is on-chain skip_cooldown so purchase actually happens.
-        if (ran.reason === "buy_error") {
-          const err = String(ran.error || "");
-          const tooSoon =
-            /TooSoon/i.test(err) ||
-            /\b6008\b/.test(err) ||
-            /0x177[08]/i.test(err);
-          if (!tooSoon) {
-            setPhase("error");
-            setMessage(
-              tRef.current("auto.status.error", {
-                reason: err || "buy_error",
-              }),
-            );
-            return;
-          }
-        }
-        const whenMs = ran.nextAt
-          ? Date.parse(ran.nextAt) || Date.now() + WEEK_MS
-          : Date.now() + WEEK_MS;
-        setPhase("idle");
-        setDue(false);
-        setNextAt(whenMs);
-        setBlockReason(null);
+        const err = String(ran.error || ran.reason || "purchase skipped");
+        setPhase("error");
         setMessage(
-          tRef.current("auto.status.next", {
-            when: formatWarsawWhen(whenMs, localeRef.current),
-          }),
+          tRef.current("auto.status.error", { reason: err }),
         );
         return;
       }
-      if (ran.names && ran.names.length >= 3) {
-        setLastTop3(ran.names.map((name) => ({ name, score: 0 })));
+      if (!ran.signature || !ran.names || ran.names.length < 3) {
+        throw new Error("Keeper returned success without a completed purchase.");
       }
+      setLastTop3(ran.names.map((name) => ({ name, score: 0 })));
       writeAutoBuyMeta({
         lastAttemptMs: Date.now(),
         lastSuccessMs: Date.now(),
@@ -335,25 +311,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       return;
     }
     if (st.phase === "error" && st.error) {
-      const err = String(st.error);
-      const tooSoon =
-        /TooSoon/i.test(err) || /\b6008\b/.test(err) || /0x177[08]/i.test(err);
-      if (tooSoon) {
-        // Enabled despite cooldown on force-buy — show schedule, not hard error.
-        const whenMs = st.nextAt
-          ? Date.parse(st.nextAt) || Date.now() + WEEK_MS
-          : Date.now() + WEEK_MS;
-        setPhase("idle");
-        setDue(false);
-        setNextAt(whenMs);
-        setBlockReason(null);
-        setMessage(
-          tRef.current("auto.status.next", {
-            when: formatWarsawWhen(whenMs, localeRef.current),
-          }),
-        );
-        return;
-      }
       setPhase("error");
       setMessage(tRef.current("auto.status.error", { reason: st.error }));
       return;
