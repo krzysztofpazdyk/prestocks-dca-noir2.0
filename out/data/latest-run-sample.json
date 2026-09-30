@@ -1,0 +1,331 @@
+{
+  "mode": "dry-run",
+  "no_swaps": true,
+  "no_mainnet": true,
+  "pipeline": [
+    "prestocks",
+    "jev"
+  ],
+  "started_at_utc": "2026-09-19T13:26:56.491071+00:00",
+  "finished_at_utc": "2026-09-19T13:26:57.310901+00:00",
+  "started_at_warsaw": "2026-09-19 15:26:56 CEST",
+  "finished_at_warsaw": "2026-09-19 15:26:57 CEST",
+  "user_prefs": {
+    "deadlines_unimportant": true,
+    "premiums_matter": true,
+    "premiums_especially_near_ipo": true,
+    "near_ipo_examples": [
+      "SpaceX"
+    ],
+    "excluded": [
+      "xAI"
+    ],
+    "strategy": "weekly_dca_equal_split_top3",
+    "dry_run": true,
+    "no_swaps": true
+  },
+  "excluded_mints": [
+    "PreC1KtJ1sBPPqaeeqL6Qb15GTLCYVvyYEwxhdfTwfx"
+  ],
+  "premiums_source": "live_mark_price_batch",
+  "products_loaded": 8,
+  "products": [
+    {
+      "name": "Anthropic",
+      "symbol": "ANTHROPIC",
+      "mint": "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw",
+      "token_price_usd": 1015.513628,
+      "mark_price_usd": 1021.040883,
+      "premium_pct": -0.541,
+      "premium_source": "live",
+      "market_cap_usd": 7496416.2327028075,
+      "holders": 36106,
+      "volume_cum_usd": 372388348.4047643,
+      "txn_count": 4144326,
+      "change_30d_pct": 19.49431261552883,
+      "near_ipo": false
+    },
+    {
+      "name": "OpenAI",
+      "symbol": "OPENAI",
+      "mint": "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF",
+      "token_price_usd": 1121.75241,
+      "mark_price_usd": 985.96982,
+      "premium_pct": 13.771,
+      "premium_source": "live",
+      "market_cap_usd": 3170608.3438765258,
+      "holders": 31280,
+      "volume_cum_usd": 377271161.96741617,
+      "txn_count": 4127804,
+      "change_30d_pct": 27.395760382395363,
+      "near_ipo": false
+    },
+    {
+      "name": "Anduril",
+      "symbol": "ANDURIL",
+      "mint": "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+      "token_price_usd": 149.088498,
+      "mark_price_usd": 153.182117,
+      "premium_pct": -2.672,
+      "premium_source": "live",
+      "market_cap_usd": 1760118.1492083254,
+      "holders": 9032,
+      "volume_cum_usd": 225538190.4523931,
+      "txn_count": 1626796,
+      "change_30d_pct": 18.306162913581193,
+      "near_ipo": false
+    },
+    {
+      "name": "Neuralink",
+      "symbol": "NEURALINK",
+      "mint": "PrekqLJvJ3qVdXmBGDiexvwUTF4rLFDa6HWS4HJbw9S",
+      "token_price_usd": 426.552131,
+      "mark_price_usd": 328.926461,
+      "premium_pct": 29.68,
+      "premium_source": "live",
+      "market_cap_usd": 1107047.300911085,
+      "holders": 6973,
+      "volume_cum_usd": 129754924.60612479,
+      "txn_count": 1210375,
+      "change_30d_pct": 68.67235212253597,
+      "near_ipo": false
+    },
+    {
+      "name": "FigureAI",
+      "symbol": "FIGUREAI",
+      "mint": "PreZad18qfPtbxNpMtMuAuX2zVpvkEU8DnJx56faCWd",
+      "token_price_usd": 181.647723,
+      "mark_price_usd": 181.999435,
+      "premium_pct": -0.193,
+      "premium_source": "live",
+      "market_cap_usd": 547291.6304840625,
+      "holders": 913,
+      "volume_cum_usd": 4385234.889179882,
+      "txn_count": 77907,
+      "change_30d_pct": null,
+      "near_ipo": false
+    },
+    {
+      "name": "Kalshi",
+      "symbol": "KALSHI",
+      "mint": "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua",
+      "token_price_usd": 895.792075,
+      "mark_price_usd": 892.536634,
+      "premium_pct": 0.365,
+      "premium_source": "live",
+      "market_cap_usd": 810600.7248184365,
+      "holders": 4367,
+      "volume_cum_usd": 172264265.10213077,
+      "txn_count": 1207305,
+      "change_30d_pct": 27.79037909494309,
+      "near_ipo": false
+    },
+    {
+      "name": "Polymarket",
+      "symbol": "POLYMARKET",
+      "mint": "Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP",
+      "token_price_usd": 143.147873,
+      "mark_price_usd": 144.168252,
+      "premium_pct": -0.708,
+      "premium_source": "live",
+      "market_cap_usd": 689566.1171658039,
+      "holders": 9179,
+      "volume_cum_usd": 104897839.5233854,
+      "txn_count": 1509338,
+      "change_30d_pct": -6.141005235276195,
+      "near_ipo": false
+    },
+    {
+      "name": "SpaceX",
+      "symbol": "SPACEX",
+      "mint": "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh",
+      "token_price_usd": 122.318412,
+      "mark_price_usd": 153.989027,
+      "premium_pct": -20.567,
+      "premium_source": "live",
+      "market_cap_usd": 5346851.986648108,
+      "holders": 10126,
+      "volume_cum_usd": 332189312.6704404,
+      "txn_count": 1097917,
+      "change_30d_pct": 24.837056043633822,
+      "near_ipo": true
+    }
+  ],
+  "grok": {
+    "skipped": true,
+    "reason": "XAI_API_KEY missing"
+  },
+  "choice": {
+    "id": "best_dca_pick",
+    "choice": "SpaceX",
+    "confidence": 0.96,
+    "probabilities": {
+      "Anthropic": 0.0,
+      "OpenAI": 0.0,
+      "Kalshi": 0.0,
+      "SpaceX": 0.98,
+      "Neuralink": 0.0,
+      "FigureAI": 0.0,
+      "Polymarket": 0.0,
+      "Anduril": 0.02
+    }
+  },
+  "scores": [
+    {
+      "name": "SpaceX",
+      "symbol": "SPACEX",
+      "mint": "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh",
+      "score": 90.5,
+      "score_raw": 3.62,
+      "confidence": 0.68,
+      "premium_pct": -20.567,
+      "token_price_usd": 122.318412,
+      "mark_price_usd": 153.989027,
+      "near_ipo": true
+    },
+    {
+      "name": "Anduril",
+      "symbol": "ANDURIL",
+      "mint": "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+      "score": 72.5,
+      "score_raw": 2.9,
+      "confidence": 0.88,
+      "premium_pct": -2.672,
+      "token_price_usd": 149.088498,
+      "mark_price_usd": 153.182117,
+      "near_ipo": false
+    },
+    {
+      "name": "Anthropic",
+      "symbol": "ANTHROPIC",
+      "mint": "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw",
+      "score": 60.5,
+      "score_raw": 2.42,
+      "confidence": 0.64,
+      "premium_pct": -0.541,
+      "token_price_usd": 1015.513628,
+      "mark_price_usd": 1021.040883,
+      "near_ipo": false
+    },
+    {
+      "name": "Polymarket",
+      "symbol": "POLYMARKET",
+      "mint": "Pre8AREmFPtoJFT8mQSXQLh56cwJmM7CFDRuoGBZiUP",
+      "score": 55.0,
+      "score_raw": 2.2,
+      "confidence": 0.69,
+      "premium_pct": -0.708,
+      "token_price_usd": 143.147873,
+      "mark_price_usd": 144.168252,
+      "near_ipo": false
+    },
+    {
+      "name": "Kalshi",
+      "symbol": "KALSHI",
+      "mint": "PreLWGkkeqG1s4HEfFZSy9moCrJ7btsHuUtfcCeoRua",
+      "score": 38.5,
+      "score_raw": 1.54,
+      "confidence": 0.6,
+      "premium_pct": 0.365,
+      "token_price_usd": 895.792075,
+      "mark_price_usd": 892.536634,
+      "near_ipo": false
+    },
+    {
+      "name": "FigureAI",
+      "symbol": "FIGUREAI",
+      "mint": "PreZad18qfPtbxNpMtMuAuX2zVpvkEU8DnJx56faCWd",
+      "score": 28.0,
+      "score_raw": 1.12,
+      "confidence": 0.44,
+      "premium_pct": -0.193,
+      "token_price_usd": 181.647723,
+      "mark_price_usd": 181.999435,
+      "near_ipo": false
+    },
+    {
+      "name": "OpenAI",
+      "symbol": "OPENAI",
+      "mint": "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF",
+      "score": 18.0,
+      "score_raw": 0.72,
+      "confidence": 0.7,
+      "premium_pct": 13.771,
+      "token_price_usd": 1121.75241,
+      "mark_price_usd": 985.96982,
+      "near_ipo": false
+    },
+    {
+      "name": "Neuralink",
+      "symbol": "NEURALINK",
+      "mint": "PrekqLJvJ3qVdXmBGDiexvwUTF4rLFDa6HWS4HJbw9S",
+      "score": 0.5,
+      "score_raw": 0.02,
+      "confidence": 0.98,
+      "premium_pct": 29.68,
+      "token_price_usd": 426.552131,
+      "mark_price_usd": 328.926461,
+      "near_ipo": false
+    }
+  ],
+  "top3": [
+    {
+      "name": "SpaceX",
+      "symbol": "SPACEX",
+      "mint": "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh",
+      "score": 90.5,
+      "score_raw": 3.62,
+      "confidence": 0.68,
+      "premium_pct": -20.567,
+      "token_price_usd": 122.318412,
+      "mark_price_usd": 153.989027,
+      "near_ipo": true
+    },
+    {
+      "name": "Anduril",
+      "symbol": "ANDURIL",
+      "mint": "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+      "score": 72.5,
+      "score_raw": 2.9,
+      "confidence": 0.88,
+      "premium_pct": -2.672,
+      "token_price_usd": 149.088498,
+      "mark_price_usd": 153.182117,
+      "near_ipo": false
+    },
+    {
+      "name": "Anthropic",
+      "symbol": "ANTHROPIC",
+      "mint": "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw",
+      "score": 60.5,
+      "score_raw": 2.42,
+      "confidence": 0.64,
+      "premium_pct": -0.541,
+      "token_price_usd": 1015.513628,
+      "mark_price_usd": 1021.040883,
+      "near_ipo": false
+    }
+  ],
+  "mints_top3": [
+    "PreANxuXjsy2pvisWWMNB6YaJNzr7681wJJr2rHsfTh",
+    "PresTj4Yc2bAR197Er7wz4UUKSfqt6FryBEdAriBoQB",
+    "Pren1FvFX6J3E4kXhJuCiAD5aDmGEb7qJRncwA8Lkhw"
+  ],
+  "jev_model": "jev-1.13.0",
+  "jev_usage": {
+    "input_tokens": 3802,
+    "output_tokens": 226
+  },
+  "state_chars": 1689,
+  "questions_asked": [
+    "best_dca_pick",
+    "score_anthropic",
+    "score_openai",
+    "score_anduril",
+    "score_neuralink",
+    "score_figureai",
+    "score_kalshi",
+    "score_polymarket",
+    "score_spacex"
+  ]
+}
