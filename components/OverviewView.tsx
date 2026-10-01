@@ -155,12 +155,8 @@ export function OverviewView() {
     connected && predca.portfolioUsd != null ? predca.portfolioUsd : null;
 
   // Connected: on-chain ATAs for ALL mints in devnet-mock-mints (via allMockMints).
-  // Disconnected: local mock HOLDINGS / portfolio-state only (never as connected primary).
-  const displayHoldings: Holding[] = connected
-    ? predca.holdingsOnChain
-    : holdings.length > 0
-      ? holdings
-      : HOLDINGS;
+  // Disconnected: holdings stay empty; never render the mock allocation pie.
+  const displayHoldings: Holding[] = connected ? predca.holdingsOnChain : [];
 
   const displayLastPurchase: Purchase | null = (() => {
     if (!connected || !onChainReady || !predca.lastPurchaseOnChain) {
