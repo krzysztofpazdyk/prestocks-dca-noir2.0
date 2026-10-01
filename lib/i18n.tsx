@@ -149,6 +149,8 @@ const pl: Dict = {
   "auto.status.keeperDown":
     "Keeper niedostępny (tunel lub usługa). UI nie kupuje sam — spróbuj później lub sprawdź połączenie.",
   "auto.status.ok":
+    "Automatyczny zakup tygodniowy OK · ${amount} z vault → {tokens}",
+  "auto.status.okWithNext":
     "Automatyczny zakup tygodniowy OK · ${amount} z vault → {tokens} · następny zakup: {nextBuy}",
   "auto.status.vaultLow":
     "Auto-zakup wstrzymany — za mało USDC w vault ({have} < {need}).",
@@ -361,6 +363,8 @@ const en: Dict = {
   "auto.status.keeperDown":
     "Keeper unavailable (tunnel or service). This tab does not buy on its own — try again later or check the connection.",
   "auto.status.ok":
+    "Weekly auto-buy OK · ${amount} from vault → {tokens}",
+  "auto.status.okWithNext":
     "Weekly auto-buy OK · ${amount} from vault → {tokens} · next buy: {nextBuy}",
   "auto.status.vaultLow":
     "Auto-buy paused — not enough USDC in vault ({have} < {need}).",

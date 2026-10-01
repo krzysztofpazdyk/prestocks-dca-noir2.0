@@ -277,10 +277,12 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       // pre-enable on-chain RunRecord while the keeper status catches up.
       const nextBuyMs = keeperNextBuyAtMs(ran) ?? Date.now() + WEEK_MS;
       setNextAt(nextBuyMs);
+      const amountLabel = (ran.amountUsd ?? amount).toFixed(2);
+      const tokensLabel = (ran.names ?? []).join(" · ");
       setMessage(
-        tRef.current("auto.status.ok", {
-          amount: (ran.amountUsd ?? amount).toFixed(2),
-          tokens: (ran.names ?? []).join(" · "),
+        tRef.current("auto.status.okWithNext", {
+          amount: amountLabel,
+          tokens: tokensLabel,
           nextBuy: formatWarsawWhen(nextBuyMs, localeRef.current),
         }),
       );
@@ -356,22 +358,35 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       setNextAt(nextBuyMs);
       setDue(false);
     }
-    if (st.phase === "ok" && st.signature) {
+    // Keeper settles on not_due after a successful buy while keeping
+    // signature/names/amountUsd/nextAt. Gating only on phase===ok hid the
+    // OK status line in Settings + banner (fell through to local idle).
+    const purchaseComplete =
+      (st.phase === "ok" || st.phase === "not_due") &&
+      !!st.signature &&
+      st.amountUsd != null &&
+      Array.isArray(st.names) &&
+      st.names.length > 0;
+    if (purchaseComplete || (st.phase === "ok" && st.signature)) {
       setPhase("ok");
       if (st.names && st.names.length >= 3) {
         setLastTop3(st.names.map((name) => ({ name, score: 0 })));
       }
       if (st.amountUsd != null && st.names) {
         const nextBuy = nextBuyMs ?? nextAtRef.current;
+        const amountLabel = st.amountUsd.toFixed(2);
+        const tokensLabel = st.names.join(" · ");
         setMessage(
-          tRef.current("auto.status.ok", {
-            amount: st.amountUsd.toFixed(2),
-            tokens: st.names.join(" · "),
-            nextBuy:
-              nextBuy != null
-                ? formatWarsawWhen(nextBuy, localeRef.current)
-                : "—",
-          }),
+          nextBuy != null
+            ? tRef.current("auto.status.okWithNext", {
+                amount: amountLabel,
+                tokens: tokensLabel,
+                nextBuy: formatWarsawWhen(nextBuy, localeRef.current),
+              })
+            : tRef.current("auto.status.ok", {
+                amount: amountLabel,
+                tokens: tokensLabel,
+              }),
         );
       }
       return;
