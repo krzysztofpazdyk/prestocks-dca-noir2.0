@@ -132,9 +132,22 @@ function sessionStorageKey(owner: string): string {
 
 function readStoredSession(owner: string): SessionCached | null {
   const key = owner.trim();
-  if (typeof sessionStorage === "undefined") return null;
+  if (typeof localStorage === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(sessionStorageKey(key));
+    const sk = sessionStorageKey(key);
+    let raw = localStorage.getItem(sk);
+    // Migrate v3.38–3.43 sessionStorage → localStorage (12h TTL survives tab close).
+    if (!raw && typeof sessionStorage !== "undefined") {
+      try {
+        raw = sessionStorage.getItem(sk);
+        if (raw) {
+          localStorage.setItem(sk, raw);
+          sessionStorage.removeItem(sk);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SessionCached;
     if (
@@ -152,23 +165,23 @@ function readStoredSession(owner: string): SessionCached | null {
 }
 
 function writeStoredSession(session: SessionCached): void {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined") return;
   try {
-    sessionStorage.setItem(sessionStorageKey(session.owner), JSON.stringify(session));
+    localStorage.setItem(sessionStorageKey(session.owner), JSON.stringify(session));
   } catch {
     /* ignore quota / private mode */
   }
 }
 
 function removeStoredSession(owner?: string): void {
-  if (typeof sessionStorage === "undefined") return;
+  if (typeof localStorage === "undefined") return;
   try {
-    if (owner) sessionStorage.removeItem(sessionStorageKey(owner));
+    if (owner) localStorage.removeItem(sessionStorageKey(owner));
     else {
       const prefix = "predca.keeper.session.";
-      for (let i = sessionStorage.length - 1; i >= 0; i--) {
-        const k = sessionStorage.key(i);
-        if (k && k.startsWith(prefix)) sessionStorage.removeItem(k);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(prefix)) localStorage.removeItem(k);
       }
     }
   } catch {
@@ -494,11 +507,33 @@ type StatusMintResult = {
 
 function ingestSessionFromPayload(owner: string, data: StatusWithSession | null): void {
   if (!data) return;
-  const token = data.sessionToken;
-  const exp = data.sessionExpiresAt;
-  if (typeof token === "string" && token && typeof exp === "number" && exp > 0) {
-    setCachedSession(owner, token, exp);
+  const raw = data as StatusWithSession & {
+    session_token?: string;
+    session_expires_at?: number | string;
+  };
+  const token =
+    (typeof raw.sessionToken === "string" && raw.sessionToken) ||
+    (typeof raw.session_token === "string" && raw.session_token) ||
+    "";
+  const expRaw = raw.sessionExpiresAt ?? raw.session_expires_at;
+  const exp =
+    typeof expRaw === "number"
+      ? expRaw
+      : typeof expRaw === "string" && expRaw.trim()
+        ? Number(expRaw)
+        : NaN;
+  if (token && Number.isFinite(exp) && exp > 0) {
+    // Accept ms timestamps defensively.
+    const expSec = exp > 1e12 ? Math.floor(exp / 1000) : Math.floor(exp);
+    setCachedSession(owner, token, expSec);
   }
+}
+
+/** Drop session only — keep statusAuthCache so a 401 remint can stay silent. */
+function clearSessionOnly(owner: string): void {
+  const key = owner.trim();
+  sessionCache.delete(key);
+  removeStoredSession(key);
 }
 
 function statusErrorFrom(
@@ -519,7 +554,7 @@ function statusErrorFrom(
 /**
  * Per-owner keeper status — one wallet sign mints a server session; polls use Bearer.
  * Without owner/signMessage returns wallet_required (use keeperHealth for alive).
- * On 401 clears session and re-signs once.
+ * On Bearer 401 soft-clears session (keeps status sig cache) and remints once.
  */
 export async function keeperStatus(
   owner?: string,
@@ -544,6 +579,24 @@ export async function keeperStatus(
     );
 
   const signAndMint = async (): Promise<StatusMintResult> => {
+    // Another poll may have minted while we waited on inflight/401.
+    const raced = getCachedSession(key);
+    if (raced) {
+      const br = await fetchWithBearer(raced.token);
+      if (
+        br.data &&
+        br.status !== 0 &&
+        br.ok &&
+        br.status !== 401 &&
+        br.status !== 403
+      ) {
+        ingestSessionFromPayload(key, br.data as StatusWithSession);
+        return {
+          session: getCachedSession(key),
+          result: { ...br.data, source: br.data.source ?? "daemon" },
+        };
+      }
+    }
     let auth;
     try {
       auth = await getStatusAuth(key, signMessage);
@@ -572,6 +625,7 @@ export async function keeperStatus(
       };
     }
     if (r.status === 401 || r.status === 403) {
+      // Signed POST rejected — drop sig cache so next attempt re-prompts.
       clearStatusAuthCache(key);
     }
     if (data && r.status !== 0) {
@@ -580,16 +634,18 @@ export async function keeperStatus(
     return { session: null, result: { ok: false, error: "keeper_unreachable" } };
   };
 
-  // 1) Try existing session (memory + sessionStorage) — no wallet prompt
+  // 1) Try existing session (memory + localStorage) — no wallet prompt
   const existing = getCachedSession(key);
   if (existing) {
     const r = await fetchWithBearer(existing.token);
     if (r.data && r.status !== 0 && r.ok && r.status !== 401 && r.status !== 403) {
+      ingestSessionFromPayload(key, r.data as StatusWithSession);
       return { ...r.data, source: r.data.source ?? "daemon" };
     }
     if (r.status === 401 || r.status === 403) {
-      clearStatusAuthCache(key);
-      // fall through — re-sign once below
+      // Soft-clear: keep statusAuthCache so remint can reuse ~5min sig silently.
+      clearSessionOnly(key);
+      // fall through — remint below (Phantom only if status auth also expired)
     } else if (r.data && r.status !== 0) {
       return statusErrorFrom(r.data as StatusWithSession, r.status);
     } else {

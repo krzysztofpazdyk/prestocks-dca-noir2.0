@@ -79,6 +79,8 @@ export function SettingsView() {
   const predca = usePredca();
   const autoBuy = useAutoWeeklyBuy();
   const { publicKey, signMessage } = useWallet();
+  const signMessageRef = useRef(signMessage);
+  signMessageRef.current = signMessage;
   const { t } = useI18n();
   const [weekly, setWeekly] = useState(DEFAULT_SETTINGS.weeklyAmountUsd);
   const [exclusions, setExclusions] = useState(
@@ -136,8 +138,10 @@ export function SettingsView() {
 
       try {
         const wallet = publicKey?.toBase58() ?? null;
-        const sign = signMessage ?? undefined;
+        const sign = signMessageRef.current ?? undefined;
         // Without wallet/sign: keep localStorage; do not call detailed status.
+        // signMessage identity changes often — use ref so we do not re-hydrate
+        // (and re-hit status) on every adapter render.
         const status = await keeperStatus(wallet ?? undefined, sign);
         if (cancelled) return;
 
@@ -172,7 +176,7 @@ export function SettingsView() {
     return () => {
       cancelled = true;
     };
-  }, [publicKey, signMessage]);
+  }, [publicKey]);
 
   // Persist exclusions (debounced) so ranking reads localStorage mid-session.
   useEffect(() => {
