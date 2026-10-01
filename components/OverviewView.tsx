@@ -81,7 +81,7 @@ export function OverviewView() {
     tokens: [...LAST_PURCHASE.tokens],
   }));
   const [portfolioRevision, setPortfolioRevision] = useState(0);
-  const [depositAmt, setDepositAmt] = useState(50);
+  const [depositAmt, setDepositAmt] = useState(500);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
   const [top3, setTop3] = useState<JevRank[]>([]);
   const [top3Title, setTop3Title] = useState<string | null>(null);

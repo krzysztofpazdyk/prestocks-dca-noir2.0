@@ -110,8 +110,11 @@ export function SettingsView() {
   const prevAutoPhase = useRef(autoBuy.phase);
 
   // Settings weekly amount is SoT for init-on-deposit (Overview reads same LS key).
+  // Hydrate once from LS; do not keep syncing from on-chain (that stomped LS saves).
+  const [weeklyReady, setWeeklyReady] = useState(false);
   useEffect(() => {
     setWeekly(readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd));
+    setWeeklyReady(true);
   }, []);
 
   // Hydrate ranking toggles from keeper GET /prefs (authoritative for buys).
@@ -223,19 +226,15 @@ export function SettingsView() {
     buyDespiteIpo,
   ]);
 
+  // Persist weekly to localStorage as the user edits (not gated on ranking prefsReady).
+  // On-chain budget still updates only when enabling weekly auto-buy (startCycle).
   useEffect(() => {
-    if (!prefsReady) return;
+    if (!weeklyReady) return;
     const id = window.setTimeout(() => {
       writeWeeklyBudgetUsd(weekly);
     }, 300);
     return () => window.clearTimeout(id);
-  }, [weekly, prefsReady]);
-
-  useEffect(() => {
-    if (predca.weeklyBudgetUsd != null && predca.weeklyBudgetUsd > 0) {
-      setWeekly(predca.weeklyBudgetUsd);
-    }
-  }, [predca.weeklyBudgetUsd]);
+  }, [weekly, weeklyReady]);
 
   useEffect(() => {
     if (!autoConfirmOpen) return;
@@ -417,6 +416,7 @@ export function SettingsView() {
               setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
               predca.clearMessages();
             }}
+            onBlur={() => writeWeeklyBudgetUsd(weekly)}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
           />
           <p className="text-xs text-[#8b95a8]">

@@ -168,10 +168,10 @@ const pl: Dict = {
   "settings.kicker": "Konfiguracja DCA",
   "settings.title": "Ustawienia",
   "settings.intro":
-    "Tygodniowa kwota zostaje zapisana przy włączeniu cotygodniowych zakupów. BYOK pozostaje w localStorage.",
+    "Tygodniowa kwota zapisuje się lokalnie od razu; na chain trafia przy włączeniu cotygodniowych zakupów. BYOK pozostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
   "settings.weeklyAtEnable":
-    "Zapisze się przy włączeniu cotygodniowych zakupów (nie trzeba osobno na chain).",
+    "Zapis lokalny od razu (init/deposit). On-chain przy włączeniu cotygodniowych zakupów.",
   "settings.autoWeekly": "Automatyczny cotygodniowy zakup z vaulta",
   "settings.autoWeeklyHint":
     "Domyślnie wyłączone. Włączenie bierze kwotę z pola powyżej i od razu kupuje 3 PreStock. Ta transakcja uruchamia cotygodniowy harmonogram. Późniejszych zakupów nie musisz już potwierdzać.",
@@ -385,10 +385,10 @@ const en: Dict = {
   "settings.kicker": "DCA configuration",
   "settings.title": "Settings",
   "settings.intro":
-    "The weekly amount is saved when you turn on weekly purchases. BYOK stays in localStorage.",
+    "Weekly amount saves locally right away; on-chain when you enable weekly purchases. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
   "settings.weeklyAtEnable":
-    "Saved when you enable weekly purchases (no separate on-chain save).",
+    "Saved locally right away (init/deposit). On-chain when you enable weekly purchases.",
   "settings.autoWeekly": "Automatic weekly purchase from the vault",
   "settings.autoWeeklyHint":
     "Off by default. Enabling takes the amount above and immediately buys 3 PreStocks. That transaction starts the weekly schedule. You will not need to confirm later purchases.",
