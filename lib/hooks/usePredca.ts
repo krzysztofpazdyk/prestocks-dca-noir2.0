@@ -312,18 +312,20 @@ function usePredcaImpl() {
     );
   }
 
-  async function depositUsdc(amountUsd: number) {
-    if (!program || !owner || !mint) {
+  /**
+   * Deposit USDC into vault.
+   * If UserConfig is missing: initialize_user + deposit_usdc in one transaction
+   * (weeklyBudgetUsdForInit required / used as on-chain weekly budget).
+   */
+  async function depositUsdc(
+    amountUsd: number,
+    weeklyBudgetUsdForInit?: number,
+  ) {
+    if (!program || !owner || !mint || !provider) {
       setError(
         !mint
           ? `Brak NEXT_PUBLIC_USDC_MINT. Ustaw mock mint (${MOCK_USDC_MINT}) na Devnet.`
           : "Podłącz portfel.",
-      );
-      return null;
-    }
-    if (!config) {
-      setError(
-        "Predca nie jest zainicjalizowane. Najpierw kliknij Initialize (u góry stripu Predca).",
       );
       return null;
     }
@@ -333,6 +335,39 @@ function usePredcaImpl() {
       return null;
     }
     const ownerUsdcAtaPk = ownerUsdcAta(owner, mint);
+
+    // First deposit: initialize_user + deposit_usdc in one tx.
+    if (!config) {
+      const budgetUsd =
+        weeklyBudgetUsdForInit != null &&
+        Number.isFinite(weeklyBudgetUsdForInit) &&
+        weeklyBudgetUsdForInit > 0
+          ? weeklyBudgetUsdForInit
+          : 0;
+      const budgetRaw = dollarsToRaw(budgetUsd);
+      if (budgetRaw.lte(new BN(0))) {
+        setError(
+          "Przy pierwszej wpłacie ustaw budżet tygodniowy > 0 (init + deposit w jednej tx).",
+        );
+        return null;
+      }
+      return withTx(async () => {
+        const initIx = await program.methods
+          .initializeUser(budgetRaw)
+          .accounts({ usdcMint: mint })
+          .instruction();
+        const depositIx = await program.methods
+          .depositUsdc(raw)
+          .accounts({
+            usdcMint: mint,
+            ownerUsdc: ownerUsdcAtaPk,
+          })
+          .instruction();
+        const tx = new Transaction().add(initIx, depositIx);
+        return provider.sendAndConfirm(tx);
+      }, `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`);
+    }
+
     return withTx(
       () =>
         program.methods
@@ -357,7 +392,7 @@ function usePredcaImpl() {
     }
     if (!config) {
       setError(
-        "Predca nie jest zainicjalizowane. Najpierw kliknij Initialize.",
+        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
       );
       return null;
     }
@@ -414,7 +449,7 @@ function usePredcaImpl() {
     }
     if (!config) {
       setError(
-        "Predca nie jest zainicjalizowane. Najpierw kliknij Initialize.",
+        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
       );
       return null;
     }

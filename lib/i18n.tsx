@@ -57,13 +57,15 @@ const pl: Dict = {
   "predca.mintLabel": "Mint mock USDC:",
   "predca.mintNoAta":
     "· Brak ATA / saldo — utwórz konto tokenowe i zrób mint testowych USDC na Devnet przed Deposit.",
-  "predca.initBudget": "Budżet przy init (USDC)",
+  "predca.initBudget": "Budżet tygodniowy (USDC)",
   "predca.initialize": "Initialize",
   "predca.waiting": "Czekam…",
   "predca.initHint":
-    "Predca nie jest zainicjalizowane — najpierw Initialize, potem Deposit (wymaga mock USDC w ATA portfela).",
+    "Pierwsza wpłata = initialize_user + deposit w jednej tx. Ustaw budżet tygodniowy i wpłać USDC z ATA portfela.",
+  "predca.rentHint":
+    "Hint: init tworzy UserConfig + vault ATA — potrzebujesz ~0.002–0.003 SOL na rent (opłata konta).",
   "predca.depositUnavailable":
-    "Deposit niedostępny ({reason}). Gdy status = ready, pojawi się formularz wpłaty/wypłaty.",
+    "Deposit niedostępny ({reason}). Podłącz portfel z mintem USDC, by wpłacić.",
   "predca.status.loading": "ładowanie…",
   "predca.status.no_mint": "brak mint",
   "predca.status.disconnected": "brak portfela",
@@ -267,13 +269,15 @@ const en: Dict = {
   "predca.mintLabel": "Mock USDC mint:",
   "predca.mintNoAta":
     "· No ATA / balance — create a token account and mint test USDC on Devnet before Deposit.",
-  "predca.initBudget": "Budget at init (USDC)",
+  "predca.initBudget": "Weekly budget (USDC)",
   "predca.initialize": "Initialize",
   "predca.waiting": "Waiting…",
   "predca.initHint":
-    "Predca is not initialized — Initialize first, then Deposit (needs mock USDC in the wallet ATA).",
+    "First deposit = initialize_user + deposit in one tx. Set weekly budget and deposit USDC from the wallet ATA.",
+  "predca.rentHint":
+    "Hint: init creates UserConfig + vault ATA — you need ~0.002–0.003 SOL for rent (account fee).",
   "predca.depositUnavailable":
-    "Deposit unavailable ({reason}). When status = ready, the deposit/withdraw form appears.",
+    "Deposit unavailable ({reason}). Connect a wallet with the USDC mint configured to deposit.",
   "predca.status.loading": "loading…",
   "predca.status.no_mint": "no mint",
   "predca.status.disconnected": "no wallet",

@@ -298,7 +298,12 @@ export function OverviewView() {
     }
   }
 
-  const depositDisabled = predca.txPending || predca.status !== "ready";
+  const canDeposit =
+    connected &&
+    !!predca.mint &&
+    (predca.status === "ready" || predca.status === "no_config");
+  const depositDisabled = predca.txPending || !canDeposit;
+  const showWithdraw = onChainReady; // account exists; enablement same as before (txPending only)
   const vaultTooLow =
     availableVaultUsdc == null ||
     !Number.isFinite(availableVaultUsdc) ||
@@ -435,61 +440,66 @@ export function OverviewView() {
             }
             unit="USDC"
           />
-          {onChainReady && (
-            <>
-              <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+          {canDeposit && (
+            <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+                {t("predca.deposit")}
+              </p>
+              <div className="mt-2 flex items-end gap-2">
+                <input
+                  type="number"
+                  min={0.000001}
+                  step={1}
+                  value={depositAmt}
+                  onChange={(e) => setDepositAmt(Number(e.target.value))}
+                  disabled={depositDisabled}
+                  className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
+                />
+                <button
+                  type="button"
+                  disabled={depositDisabled}
+                  onClick={() =>
+                    void predca.depositUsdc(
+                      depositAmt,
+                      predca.status === "no_config" ? initBudget : undefined,
+                    )
+                  }
+                  className="rounded border border-[#2dd4bf44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
+                >
                   {t("predca.deposit")}
-                </p>
-                <div className="mt-2 flex items-end gap-2">
-                  <input
-                    type="number"
-                    min={0.000001}
-                    step={1}
-                    value={depositAmt}
-                    onChange={(e) => setDepositAmt(Number(e.target.value))}
-                    disabled={depositDisabled}
-                    className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
-                  />
-                  <button
-                    type="button"
-                    disabled={depositDisabled}
-                    onClick={() => void predca.depositUsdc(depositAmt)}
-                    className="rounded border border-[#2dd4bf44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
-                  >
-                    {t("predca.deposit")}
-                  </button>
-                </div>
+                </button>
               </div>
-              <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
-                <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+            </div>
+          )}
+          {showWithdraw && (
+            <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+                {t("predca.withdraw")}
+              </p>
+              <div className="mt-2 flex items-end gap-2">
+                <input
+                  type="number"
+                  min={0.000001}
+                  step={1}
+                  value={withdrawAmt}
+                  onChange={(e) => setWithdrawAmt(Number(e.target.value))}
+                  disabled={predca.txPending}
+                  className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#a78bfa] outline-none focus:border-[#a78bfa66] disabled:opacity-40"
+                />
+                <button
+                  type="button"
+                  disabled={predca.txPending}
+                  onClick={() => void predca.withdrawUsdc(withdrawAmt)}
+                  className="rounded border border-[#a78bfa44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#a78bfa] hover:bg-[#a78bfa11] disabled:opacity-40"
+                >
                   {t("predca.withdraw")}
-                </p>
-                <div className="mt-2 flex items-end gap-2">
-                  <input
-                    type="number"
-                    min={0.000001}
-                    step={1}
-                    value={withdrawAmt}
-                    onChange={(e) => setWithdrawAmt(Number(e.target.value))}
-                    disabled={predca.txPending}
-                    className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#a78bfa] outline-none focus:border-[#a78bfa66] disabled:opacity-40"
-                  />
-                  <button
-                    type="button"
-                    disabled={predca.txPending}
-                    onClick={() => void predca.withdrawUsdc(withdrawAmt)}
-                    className="rounded border border-[#a78bfa44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#a78bfa] hover:bg-[#a78bfa11] disabled:opacity-40"
-                  >
-                    {t("predca.withdraw")}
-                  </button>
-                </div>
+                </button>
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        {onChainReady && (
+        {canDeposit && (
           <div className="mt-2 space-y-1">
             {predca.ownerUsdc == null && (
               <p className="text-[10px] text-[#fbbf24]">
@@ -527,7 +537,7 @@ export function OverviewView() {
           </p>
         )}
 
-        {connected && predca.status === "no_config" && (
+        {connected && predca.status === "no_config" && canDeposit && (
           <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-[#1e2633] pt-4">
             <label className="space-y-1">
               <span className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
@@ -539,24 +549,23 @@ export function OverviewView() {
                 step={10}
                 value={initBudget}
                 onChange={(e) => setInitBudget(Number(e.target.value))}
-                className="mono-num block w-36 rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
+                disabled={predca.txPending}
+                className="mono-num block w-36 rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
               />
             </label>
-            <button
-              type="button"
-              disabled={predca.txPending || !predca.mint}
-              onClick={() => void predca.initializeUser(initBudget)}
-              className="rounded border border-[#2dd4bf44] bg-[#0c0e12] px-4 py-2 text-xs uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
-            >
-              {predca.txPending ? t("predca.waiting") : t("predca.initialize")}
-            </button>
             <p className="w-full text-[10px] text-[#fbbf24]">
               {t("predca.initHint")}
+            </p>
+            <p className="w-full text-[10px] text-[#8b95a8]">
+              {t("predca.rentHint")}
             </p>
           </div>
         )}
 
-        {connected && predca.status !== "ready" && predca.status !== "no_config" && (
+        {connected &&
+          predca.status !== "ready" &&
+          predca.status !== "no_config" &&
+          !canDeposit && (
           <p className="mt-4 border-t border-[#1e2633] pt-4 text-[10px] text-[#8b95a8]">
             {t("predca.depositUnavailable", { reason: statusReason })}
           </p>
