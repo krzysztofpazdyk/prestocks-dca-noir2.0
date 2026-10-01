@@ -20,6 +20,7 @@ import {
   savePortfolioState,
   type PortfolioBalances,
 } from "@/lib/portfolio-state";
+import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import { usePredca } from "@/lib/hooks/usePredca";
 import {
   clusterShortPl,
@@ -51,18 +52,9 @@ function top3TitleFromRank(result: RankResult, locale: string): string {
 }
 
 function resolvePurchaseAmount(weeklyBudgetUsd: number | null): number {
-  if (weeklyBudgetUsd != null) return weeklyBudgetUsd;
-
-  const savedBudget =
-    typeof window === "undefined"
-      ? null
-      : window.localStorage.getItem("predca_weekly_budget_usd");
-  const savedAmount = savedBudget
-    ? Number(savedBudget.trim().replace(",", "."))
-    : NaN;
-  return Number.isFinite(savedAmount) && savedAmount > 0
-    ? savedAmount
-    : DEFAULT_SETTINGS.weeklyAmountUsd;
+  if (weeklyBudgetUsd != null && weeklyBudgetUsd > 0) return weeklyBudgetUsd;
+  // Settings weekly amount (localStorage) — same SoT as init-on-deposit.
+  return readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
 }
 
 function emptyPurchase(): Purchase {
@@ -89,7 +81,6 @@ export function OverviewView() {
     tokens: [...LAST_PURCHASE.tokens],
   }));
   const [portfolioRevision, setPortfolioRevision] = useState(0);
-  const [initBudget, setInitBudget] = useState(150);
   const [depositAmt, setDepositAmt] = useState(50);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
   const [top3, setTop3] = useState<JevRank[]>([]);
@@ -429,7 +420,9 @@ export function OverviewView() {
             value={
               predca.weeklyBudgetUsd != null
                 ? formatUsd(predca.weeklyBudgetUsd)
-                : "—"
+                : predca.status === "no_config"
+                  ? formatUsd(purchaseAmount)
+                  : "—"
             }
             unit="USDC"
           />
@@ -461,7 +454,9 @@ export function OverviewView() {
                   onClick={() =>
                     void predca.depositUsdc(
                       depositAmt,
-                      predca.status === "no_config" ? initBudget : undefined,
+                      predca.status === "no_config"
+                        ? purchaseAmount
+                        : undefined,
                     )
                   }
                   className="rounded border border-[#2dd4bf44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
@@ -539,20 +534,17 @@ export function OverviewView() {
 
         {connected && predca.status === "no_config" && canDeposit && (
           <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-[#1e2633] pt-4">
-            <label className="space-y-1">
+            <div className="space-y-1">
               <span className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
                 {t("predca.initBudget")}
               </span>
-              <input
-                type="number"
-                min={1}
-                step={10}
-                value={initBudget}
-                onChange={(e) => setInitBudget(Number(e.target.value))}
-                disabled={predca.txPending}
-                className="mono-num block w-36 rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
-              />
-            </label>
+              <p className="mono-num text-sm text-[#2dd4bf]">
+                {formatUsd(purchaseAmount)}{" "}
+                <span className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+                  USDC
+                </span>
+              </p>
+            </div>
             <p className="w-full text-[10px] text-[#fbbf24]">
               {t("predca.initHint")}
             </p>

@@ -27,6 +27,7 @@ import {
   type KeeperPrefsPayload,
 } from "@/lib/keeper-client";
 import {
+  readWeeklyBudgetUsd,
   writeWeeklyBudgetUsd,
 } from "@/lib/auto-weekly-buy";
 import { useAutoWeeklyBuy } from "@/lib/hooks/useAutoWeeklyBuy";
@@ -105,6 +106,11 @@ export function SettingsView() {
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [prefsSaveMsg, setPrefsSaveMsg] = useState<string | null>(null);
   const prevAutoPhase = useRef(autoBuy.phase);
+
+  // Settings weekly amount is SoT for init-on-deposit (Overview reads same LS key).
+  useEffect(() => {
+    setWeekly(readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd));
+  }, []);
 
   // Hydrate ranking toggles from keeper GET /prefs (authoritative for buys).
   // prefsReady stays false until hydrate finishes so we never push stale local

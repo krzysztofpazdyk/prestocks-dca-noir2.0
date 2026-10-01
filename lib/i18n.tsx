@@ -61,7 +61,7 @@ const pl: Dict = {
   "predca.initialize": "Initialize",
   "predca.waiting": "Czekam…",
   "predca.initHint":
-    "Pierwsza wpłata = initialize_user + deposit w jednej tx. Ustaw budżet tygodniowy i wpłać USDC z ATA portfela.",
+    "Pierwsza wpłata = initialize_user + deposit w jednej tx. Budżet tygodniowy bierze się z Ustawień (ta sama kwota). Zmień go w Ustawieniach, potem wpłać USDC z ATA portfela.",
   "predca.rentHint":
     "Hint: init tworzy UserConfig + vault ATA — potrzebujesz ~0.002–0.003 SOL na rent (opłata konta).",
   "predca.depositUnavailable":
@@ -278,7 +278,7 @@ const en: Dict = {
   "predca.initialize": "Initialize",
   "predca.waiting": "Waiting…",
   "predca.initHint":
-    "First deposit = initialize_user + deposit in one tx. Set weekly budget and deposit USDC from the wallet ATA.",
+    "First deposit = initialize_user + deposit in one tx. Weekly budget comes from Settings (same amount). Change it in Settings, then deposit USDC from the wallet ATA.",
   "predca.rentHint":
     "Hint: init creates UserConfig + vault ATA — you need ~0.002–0.003 SOL for rent (account fee).",
   "predca.depositUnavailable":
