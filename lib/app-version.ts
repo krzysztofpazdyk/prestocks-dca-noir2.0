@@ -1,3 +1,2 @@
 /** App UI version shown on Overview. Bump +0.01 on every release. */
-export const APP_VERSION = "3.39";
-
+export const APP_VERSION = "3.40";

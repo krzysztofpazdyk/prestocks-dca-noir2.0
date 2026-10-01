@@ -416,7 +416,7 @@ const en: Dict = {
   "settings.cleared": "· cleared ✓",
   "settings.exclusions": "Exclusions (e.g. xAI, OpenAI) — applied to ranking",
   "settings.buyDespiteIpo": "Buy PreStock even after IPO",
-  "settings.deadlineInvalid": "Deadline irrelevant",
+  "settings.deadlineInvalid": "Include tokens with an expiry date (they become worthless after the end date).",
   "settings.ipoPremium": "IPO premium matters",
   "settings.prefsDirtyHint":
     "Settings changed. Sign a wallet message to save them to the keeper.",
