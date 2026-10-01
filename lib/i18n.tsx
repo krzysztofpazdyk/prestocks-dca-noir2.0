@@ -199,7 +199,7 @@ const pl: Dict = {
   "settings.cleared": "· wyczyszczono ✓",
   "settings.exclusions": "Wykluczenia (np. xAI, OpenAI) — stosowane w rankingu",
   "settings.buyDespiteIpo": "Kup PreStock mimo odbytego IPO",
-  "settings.deadlineInvalid": "Termin bez znaczenia",
+  "settings.deadlineInvalid": "Uwzględniaj tokeny z terminem ważności (po dacie końcowej stają się bezwartościowe).",
   "settings.ipoPremium": "Premia IPO ma znaczenie",
   "settings.prefsDirtyHint":
     "Zmieniono ustawienia. Aby zapisać je u keepersa, trzeba podpisać wiadomość w portfelu.",
