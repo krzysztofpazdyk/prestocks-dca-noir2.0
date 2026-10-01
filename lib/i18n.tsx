@@ -126,6 +126,9 @@ const pl: Dict = {
     "Zakup on-chain OK · sig {sig}… · ${amount} z vault → {tokens}",
   "msg.purchaseFail":
     "Zakup nieudany — szczegóły w sekcji Predca powyżej (czerwony komunikat).",
+  "msg.updatingBudget": "Aktualizuję budżet on-chain…",
+  "msg.budgetSyncFail":
+    "Nie udało się zaktualizować budżetu on-chain przed zakupem.",
   "msg.predcaNotReady":
     "Predca nie jest ready — Initialize + Deposit, potem zakup on-chain.",
   "msg.vaultLowMock":
@@ -168,10 +171,10 @@ const pl: Dict = {
   "settings.kicker": "Konfiguracja DCA",
   "settings.title": "Ustawienia",
   "settings.intro":
-    "Tygodniowa kwota zapisuje się lokalnie od razu; na chain trafia przy włączeniu cotygodniowych zakupów. BYOK pozostaje w localStorage.",
+    "Tygodniowa kwota zapisuje się lokalnie od razu; on-chain przez „Zapisz budżet on-chain”, Manual Buy (auto-sync) lub włączenie cotygodniowych zakupów. BYOK pozostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
   "settings.weeklyAtEnable":
-    "Zapis lokalny od razu (init/deposit). On-chain przy włączeniu cotygodniowych zakupów.",
+    "Zapis lokalny od razu (init/deposit). On-chain: przycisk poniżej, Manual Buy albo włączenie auto-zakupu.",
   "settings.autoWeekly": "Automatyczny cotygodniowy zakup z vaulta",
   "settings.autoWeeklyHint":
     "Domyślnie wyłączone. Włączenie bierze kwotę z pola powyżej i od razu kupuje 3 PreStock. Ta transakcja uruchamia cotygodniowy harmonogram. Późniejszych zakupów nie musisz już potwierdzać.",
@@ -343,6 +346,9 @@ const en: Dict = {
     "On-chain purchase OK · sig {sig}… · ${amount} from vault → {tokens}",
   "msg.purchaseFail":
     "Purchase failed — see details in the Predca section above (red message).",
+  "msg.updatingBudget": "Updating budget on-chain…",
+  "msg.budgetSyncFail":
+    "Could not update on-chain budget before purchase.",
   "msg.predcaNotReady":
     "Predca is not ready — Initialize + Deposit, then purchase on-chain.",
   "msg.vaultLowMock":
@@ -385,10 +391,10 @@ const en: Dict = {
   "settings.kicker": "DCA configuration",
   "settings.title": "Settings",
   "settings.intro":
-    "Weekly amount saves locally right away; on-chain when you enable weekly purchases. BYOK stays in localStorage.",
+    "Weekly amount saves locally right away; on-chain via “Save budget on-chain”, Manual Buy (auto-sync), or enabling weekly purchases. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
   "settings.weeklyAtEnable":
-    "Saved locally right away (init/deposit). On-chain when you enable weekly purchases.",
+    "Saved locally right away (init/deposit). On-chain: button below, Manual Buy, or enable auto-buy.",
   "settings.autoWeekly": "Automatic weekly purchase from the vault",
   "settings.autoWeeklyHint":
     "Off by default. Enabling takes the amount above and immediately buys 3 PreStocks. That transaction starts the weekly schedule. You will not need to confirm later purchases.",

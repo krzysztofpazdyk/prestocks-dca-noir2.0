@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
+import { formatUsd } from "@/lib/predca";
 import { useI18n } from "@/lib/i18n";
 import {
   parseExclusions,
@@ -78,7 +79,7 @@ function baselinesEqual(a: PrefsBaseline | null, b: PrefsBaseline): boolean {
 export function SettingsView() {
   const predca = usePredca();
   const autoBuy = useAutoWeeklyBuy();
-  const { publicKey, signMessage } = useWallet();
+  const { connected, publicKey, signMessage } = useWallet();
   const signMessageRef = useRef(signMessage);
   signMessageRef.current = signMessage;
   const { t } = useI18n();
@@ -256,6 +257,35 @@ export function SettingsView() {
     syncedBaseline != null &&
     !baselinesEqual(syncedBaseline, currentBaseline);
 
+  const BUDGET_EPS = 0.000001;
+  const onChainWeekly = predca.weeklyBudgetUsd;
+  const budgetDirtyOnChain =
+    onChainWeekly == null
+      ? weekly > 0
+      : Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
+
+  async function saveWeeklyBudgetOnChain() {
+    writeWeeklyBudgetUsd(weekly);
+    predca.clearMessages();
+    if (!connected || !predca.mint) return;
+    await predca.setWeeklyBudget(weekly);
+  }
+
+  let budgetBtnLabel: string;
+  if (!connected) {
+    budgetBtnLabel = t("settings.connectForBudget");
+  } else if (!predca.mint) {
+    budgetBtnLabel = t("settings.noMint");
+  } else if (predca.status === "no_config") {
+    budgetBtnLabel = predca.txPending
+      ? t("settings.initPending")
+      : t("settings.initBudget");
+  } else {
+    budgetBtnLabel = predca.txPending
+      ? t("settings.savingOnChain")
+      : t("settings.saveOnChain");
+  }
+
   async function signAndSavePrefs() {
     setPrefsSaveMsg(null);
     const owner = publicKey?.toBase58();
@@ -423,8 +453,38 @@ export function SettingsView() {
             {t("settings.weeklySplit", { amount: (weekly / 3).toFixed(2) })}
             {" "}
             {t("settings.weeklyAtEnable")}
+            {onChainWeekly != null && (
+              <>
+                {" "}
+                {t("settings.onChainBudget")}{" "}
+                <span className="mono-num text-[#2dd4bf]">
+                  {formatUsd(onChainWeekly)} USDC
+                </span>
+              </>
+            )}
           </p>
         </label>
+        {budgetDirtyOnChain && connected && predca.mint ? (
+          <button
+            type="button"
+            disabled={predca.txPending}
+            onClick={() => void saveWeeklyBudgetOnChain()}
+            className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-xs uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
+          >
+            {budgetBtnLabel}
+          </button>
+        ) : null}
+        {!connected ? (
+          <p className="text-[10px] text-[#8b95a8]">
+            {t("settings.connectForBudget")}
+          </p>
+        ) : null}
+        {predca.error && (
+          <p className="text-[10px] text-[#fca5a5]">{predca.error}</p>
+        )}
+        {predca.okMsg && (
+          <p className="text-[10px] text-[#2dd4bf]">{predca.okMsg}</p>
+        )}
         <div className="border-t border-[#1e2633] pt-4">
           <Toggle
             label={t("settings.autoWeekly")}

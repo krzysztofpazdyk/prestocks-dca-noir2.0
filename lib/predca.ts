@@ -33,6 +33,7 @@ export const PREDCA_ERROR_PL: Record<number, string> = {
   6005: "Mint authority musi być PDA mint_auth programu.",
   6006: "Mint nie zgadza się z kontem w instrukcji.",
   6007: "Duplikaty mintów w top-3.",
+  6008: "Za wcześnie: odczekaj 7 dni od ostatniego zakupu (TooSoon).",
 };
 
 export function programId(): PublicKey {

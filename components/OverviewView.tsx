@@ -51,10 +51,19 @@ function top3TitleFromRank(result: RankResult, locale: string): string {
   return locale === "en" ? "Top-3 · ranking" : "Top-3 · ranking";
 }
 
-function resolvePurchaseAmount(weeklyBudgetUsd: number | null): number {
-  if (weeklyBudgetUsd != null && weeklyBudgetUsd > 0) return weeklyBudgetUsd;
-  // Settings weekly amount (localStorage) — same SoT as init-on-deposit.
-  return readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
+const BUDGET_EPS = 0.000001;
+
+/** Intended buy amount: Settings LS is SoT; on-chain is synced before Manual Buy. */
+function resolvePurchaseAmount(onChainWeeklyUsd: number | null): number {
+  const ls = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
+  if (ls > 0) return ls;
+  if (onChainWeeklyUsd != null && onChainWeeklyUsd > 0) return onChainWeeklyUsd;
+  return DEFAULT_SETTINGS.weeklyAmountUsd;
+}
+
+function budgetsDiffer(ls: number, onChain: number | null): boolean {
+  if (onChain == null || !Number.isFinite(onChain)) return ls > 0;
+  return Math.abs(ls - onChain) > BUDGET_EPS;
 }
 
 function emptyPurchase(): Purchase {
@@ -139,7 +148,9 @@ export function OverviewView() {
     setPortfolioRevision((r) => r + 1);
   }, [connected]);
 
+  const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
   const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd);
+  const budgetDirty = budgetsDiffer(lsWeekly, predca.weeklyBudgetUsd);
   const onChainReady = predca.status === "ready";
   const onChainVaultUsdc =
     onChainReady && predca.vaultUsdc != null ? predca.vaultUsdc : null;
@@ -207,34 +218,59 @@ export function OverviewView() {
     }
 
     const tokenNames = top3.slice(0, 3).map((r) => r.name);
+    // LS is SoT for intended amount (sync on-chain before simulate_buy when dirty).
+    const intendedAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd);
 
     // Prefer on-chain simulate_buy when Predca is ready.
     if (onChainReady) {
       if (
         availableVaultUsdc == null ||
         !Number.isFinite(availableVaultUsdc) ||
-        availableVaultUsdc < purchaseAmount
+        availableVaultUsdc < intendedAmount
       ) {
         setPurchaseMsg(
           t("msg.vaultLowOnChain", {
             have: (availableVaultUsdc ?? 0).toFixed(2),
-            need: purchaseAmount.toFixed(2),
+            need: intendedAmount.toFixed(2),
           }),
         );
         return;
       }
+
+      // simulate_buy spends on-chain weeklyBudgetUsdc — sync LS → chain first.
+      const lsAmount = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
+      if (budgetsDiffer(lsAmount, predca.weeklyBudgetUsd)) {
+        setPurchaseMsg(t("msg.updatingBudget"));
+        const budgetSig = await predca.setWeeklyBudget(lsAmount);
+        if (!budgetSig) {
+          const err = predca.lastTxError();
+          setPurchaseMsg(
+            err
+              ? `${t("msg.budgetSyncFail")}: ${err}`
+              : t("msg.budgetSyncFail"),
+          );
+          return;
+        }
+        // setWeeklyBudget's withTx already refreshed; simulateBuy re-fetches budget.
+      }
+
       setPurchaseMsg(null);
       const sig = await predca.simulateBuy(tokenNames);
       if (sig) {
         setPurchaseMsg(
           t("msg.purchaseOk", {
             sig: sig.slice(0, 8),
-            amount: purchaseAmount.toFixed(2),
+            amount: intendedAmount.toFixed(2),
             tokens: tokenNames.join(" · "),
           }),
         );
       } else {
-        setPurchaseMsg(t("msg.purchaseFail"));
+        const err = predca.lastTxError();
+        setPurchaseMsg(
+          err
+            ? `${t("msg.purchaseFail")}: ${err}`
+            : t("msg.purchaseFail"),
+        );
       }
       return;
     }
@@ -440,13 +476,19 @@ export function OverviewView() {
           <Stat
             label={t("predca.budget")}
             value={
-              predca.weeklyBudgetUsd != null
-                ? formatUsd(predca.weeklyBudgetUsd)
-                : predca.status === "no_config"
-                  ? formatUsd(purchaseAmount)
-                  : "—"
+              budgetDirty
+                ? formatUsd(purchaseAmount)
+                : predca.weeklyBudgetUsd != null
+                  ? formatUsd(predca.weeklyBudgetUsd)
+                  : predca.status === "no_config"
+                    ? formatUsd(purchaseAmount)
+                    : "—"
             }
-            unit="USDC"
+            unit={
+              budgetDirty && predca.weeklyBudgetUsd != null
+                ? `USDC · chain ${formatUsd(predca.weeklyBudgetUsd)}`
+                : "USDC"
+            }
           />
           <Stat
             label={t("predca.vault")}
@@ -769,7 +811,13 @@ export function OverviewView() {
               </p>
             )}
             {purchaseMsg && (
-              <p className="mt-3 rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
+              <p
+                className={`mt-3 rounded border px-3 py-2 text-xs ${
+                  /nieudany|failed|Could not|Nie udało/i.test(purchaseMsg)
+                    ? "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]"
+                    : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
+                }`}
+              >
                 {purchaseMsg}
               </p>
             )}

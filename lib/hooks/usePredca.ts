@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -134,6 +135,12 @@ function usePredcaImpl() {
   const [loading, setLoading] = useState(false);
   const [txPending, setTxPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Sync last tx error (React state lags one render after await). */
+  const lastErrorRef = useRef<string | null>(null);
+  function reportError(msg: string | null) {
+    lastErrorRef.current = msg;
+    setError(msg);
+  }
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
   const provider = useMemo(() => {
@@ -152,7 +159,7 @@ function usePredcaImpl() {
   const owner = wallet?.publicKey ?? null;
 
   const refresh = useCallback(async () => {
-    setError(null);
+    reportError(null);
     if (!owner) {
       setConfig(null);
       setVaultUsdc(null);
@@ -218,7 +225,7 @@ function usePredcaImpl() {
         setTokenBalances(tokens);
       }
     } catch (e) {
-      setError(parseAnchorError(e));
+      reportError(parseAnchorError(e));
     } finally {
       setLoading(false);
     }
@@ -272,7 +279,7 @@ function usePredcaImpl() {
     fn: () => Promise<T>,
     success: string,
   ): Promise<T | null> {
-    setError(null);
+    reportError(null);
     setOkMsg(null);
     setTxPending(true);
     try {
@@ -281,7 +288,7 @@ function usePredcaImpl() {
       await refresh();
       return result;
     } catch (e) {
-      setError(parseAnchorError(e));
+      reportError(parseAnchorError(e));
       return null;
     } finally {
       setTxPending(false);
@@ -290,7 +297,7 @@ function usePredcaImpl() {
 
   async function initializeUser(weeklyBudgetUsd: number) {
     if (!program || !owner || !mint) {
-      setError(
+      reportError(
         !mint
           ? `Ustaw NEXT_PUBLIC_USDC_MINT (mock mint na Devnet, np. ${MOCK_USDC_MINT}).`
           : "Podłącz portfel.",
@@ -299,7 +306,7 @@ function usePredcaImpl() {
     }
     const raw = dollarsToRaw(weeklyBudgetUsd);
     if (raw.lte(new BN(0))) {
-      setError("Budżet tygodniowy musi być > 0.");
+      reportError("Budżet tygodniowy musi być > 0.");
       return null;
     }
     return withTx(
@@ -322,7 +329,7 @@ function usePredcaImpl() {
     weeklyBudgetUsdForInit?: number,
   ) {
     if (!program || !owner || !mint || !provider) {
-      setError(
+      reportError(
         !mint
           ? `Brak NEXT_PUBLIC_USDC_MINT. Ustaw mock mint (${MOCK_USDC_MINT}) na Devnet.`
           : "Podłącz portfel.",
@@ -331,7 +338,7 @@ function usePredcaImpl() {
     }
     const raw = dollarsToRaw(amountUsd);
     if (raw.lte(new BN(0))) {
-      setError("Kwota depozytu musi być > 0.");
+      reportError("Kwota depozytu musi być > 0.");
       return null;
     }
     const ownerUsdcAtaPk = ownerUsdcAta(owner, mint);
@@ -346,7 +353,7 @@ function usePredcaImpl() {
           : 0;
       const budgetRaw = dollarsToRaw(budgetUsd);
       if (budgetRaw.lte(new BN(0))) {
-        setError(
+        reportError(
           "Przy pierwszej wpłacie ustaw budżet tygodniowy > 0 (init + deposit w jednej tx).",
         );
         return null;
@@ -383,7 +390,7 @@ function usePredcaImpl() {
 
   async function withdrawUsdc(amountUsd: number) {
     if (!program || !owner || !mint) {
-      setError(
+      reportError(
         !mint
           ? `Brak NEXT_PUBLIC_USDC_MINT. Ustaw mock mint (${MOCK_USDC_MINT}) na Devnet.`
           : "Podłącz portfel.",
@@ -391,14 +398,14 @@ function usePredcaImpl() {
       return null;
     }
     if (!config) {
-      setError(
+      reportError(
         "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
       );
       return null;
     }
     const raw = dollarsToRaw(amountUsd);
     if (raw.lte(new BN(0))) {
-      setError("Kwota wypłaty musi być > 0.");
+      reportError("Kwota wypłaty musi być > 0.");
       return null;
     }
     const ownerUsdcAtaPk = ownerUsdcAta(owner, mint);
@@ -417,7 +424,7 @@ function usePredcaImpl() {
 
   async function setWeeklyBudget(weeklyBudgetUsd: number) {
     if (!program || !owner) {
-      setError("Podłącz portfel.");
+      reportError("Podłącz portfel.");
       return null;
     }
     if (!config) {
@@ -425,7 +432,7 @@ function usePredcaImpl() {
     }
     const raw = dollarsToRaw(weeklyBudgetUsd);
     if (raw.lte(new BN(0))) {
-      setError("Budżet tygodniowy musi być > 0.");
+      reportError("Budżet tygodniowy musi być > 0.");
       return null;
     }
     return withTx(
@@ -440,7 +447,7 @@ function usePredcaImpl() {
    */
   async function simulateBuy(tokenNames: string[]): Promise<string | null> {
     if (!program || !owner || !mint) {
-      setError(
+      reportError(
         !mint
           ? `Brak NEXT_PUBLIC_USDC_MINT. Ustaw mock mint (${MOCK_USDC_MINT}) na Devnet.`
           : "Podłącz portfel.",
@@ -448,7 +455,7 @@ function usePredcaImpl() {
       return null;
     }
     if (!config) {
-      setError(
+      reportError(
         "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
       );
       return null;
@@ -456,22 +463,35 @@ function usePredcaImpl() {
 
     const { mints, names, missing } = resolveTop3Mints(tokenNames);
     if (missing.length > 0) {
-      setError(
+      reportError(
         `Brak mapowania mint dla: ${missing.join(", ")}. Sprawdź lib/devnet-mock-mints.`,
       );
       return null;
     }
     if (mints.length !== 3) {
-      setError("Potrzebne dokładnie 3 tokeny top-3 z mapowaniem mint.");
+      reportError("Potrzebne dokładnie 3 tokeny top-3 z mapowaniem mint.");
       return null;
     }
 
-    const budget = weeklyBudgetUsd ?? 0;
+    // Re-fetch config so budget is fresh after setWeeklyBudget in the same turn
+    // (hook closure would otherwise keep the pre-sync weeklyBudgetUsd).
+    const freshConfig = await fetchUserConfig(program, owner);
+    if (!freshConfig) {
+      reportError(
+        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
+      );
+      return null;
+    }
+    const budget = rawToDollars(freshConfig.weeklyBudgetUsdc);
     const amountEach = Math.floor((budget * 1e6) / 3) / 1e6;
     const totalDebit = amountEach * 3;
-    if (vaultUsdc == null || vaultUsdc < totalDebit) {
-      setError(
-        `Za mało USDC w vault (on-chain): ${(vaultUsdc ?? 0).toFixed(2)} < ${totalDebit.toFixed(2)}.`,
+    const vaultNow =
+      vaultUsdc != null
+        ? vaultUsdc
+        : await fetchVaultBalance(connection, owner);
+    if (vaultNow == null || vaultNow < totalDebit) {
+      reportError(
+        `Za mało USDC w vault (on-chain): ${(vaultNow ?? 0).toFixed(2)} < ${totalDebit.toFixed(2)}.`,
       );
       return null;
     }
@@ -521,7 +541,7 @@ function usePredcaImpl() {
   }
 
   function clearMessages() {
-    setError(null);
+    reportError(null);
     setOkMsg(null);
   }
 
@@ -533,6 +553,8 @@ function usePredcaImpl() {
     loading,
     txPending,
     error,
+    /** Immediate last tx/validation error after await (ref). */
+    lastTxError: () => lastErrorRef.current ?? error,
     okMsg,
     clearMessages,
     config,
