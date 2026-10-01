@@ -99,7 +99,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     let cancelled = false;
     void (async () => {
       const owner = ownerRef.current;
-      const st = await keeperStatus(owner ?? undefined);
+      const sign = signMessageRef.current;
+      const st = await keeperStatus(owner ?? undefined, sign ?? undefined);
       const local = readAutoWeeklyBuyPref();
       if (cancelled) return;
       const keeperOn = st.enabled === true;
@@ -132,7 +133,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
           const res = await keeperDisable(owner, sign);
           if (!res.ok) {
             // Idempotent off: keeper already off → success (no scary mismatch error).
-            const st = await keeperStatus(owner);
+            const st = await keeperStatus(owner, sign);
             if (st.enabled === false) {
               setPhase("idle");
               setMessage(tRef.current("auto.status.off"));
@@ -315,7 +316,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const tick = useCallback(async () => {
     if (!prefsReady) return;
     const wallet = ownerRef.current;
-    const st = await keeperStatus(wallet ?? undefined);
+    const sign = signMessageRef.current;
+    const st = await keeperStatus(wallet ?? undefined, sign ?? undefined);
     const configuredOwner =
       (typeof st.owner === "string" && st.owner.trim()) || null;
     const sameOwner =

@@ -22,9 +22,9 @@ import {
   writeIpoPremiumMatters,
 } from "@/lib/rank-prefs";
 import {
-  keeperGetPrefs,
   keeperPushPrefs,
   keeperStatus,
+  type KeeperPrefsPayload,
 } from "@/lib/keeper-client";
 import {
   writeWeeklyBudgetUsd,
@@ -130,10 +130,9 @@ export function SettingsView() {
 
       try {
         const wallet = publicKey?.toBase58() ?? null;
-        const [status, prefsRes] = await Promise.all([
-          keeperStatus(wallet ?? undefined),
-          keeperGetPrefs(wallet ?? undefined),
-        ]);
+        const sign = signMessage ?? undefined;
+        // Without wallet/sign: keep localStorage; do not call detailed status.
+        const status = await keeperStatus(wallet ?? undefined, sign);
         if (cancelled) return;
 
         const configuredOwner =
@@ -141,9 +140,10 @@ export function SettingsView() {
         const ownerConflict =
           !!configuredOwner && !!wallet && configuredOwner !== wallet;
 
+        const statusPrefs = (status as typeof status & { prefs?: KeeperPrefsPayload }).prefs;
         // Per-owner prefs when wallet known. Skip apply on owner mismatch.
-        if (prefsRes.ok && prefsRes.prefs && !ownerConflict) {
-          const applied = applyApiPrefsToLocal(prefsRes.prefs);
+        if (status.ok && statusPrefs && !ownerConflict) {
+          const applied = applyApiPrefsToLocal(statusPrefs);
           exclusionsRaw = applied.exclusionsRaw;
           deadline = applied.deadlineInvalid;
           ipo = applied.ipoPremiumMatters;
@@ -166,7 +166,7 @@ export function SettingsView() {
     return () => {
       cancelled = true;
     };
-  }, [publicKey]);
+  }, [publicKey, signMessage]);
 
   // Persist exclusions (debounced) so ranking reads localStorage mid-session.
   useEffect(() => {

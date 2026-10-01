@@ -89,6 +89,63 @@ export async function signKeeperAuth(
   };
 }
 
+type StatusAuthCached = {
+  wallet: string;
+  message: string;
+  signature: string;
+  owner: string;
+  expiresAt: number;
+};
+
+/** Module-level cache: reuse status sig until expires-30s (SIG_TTL_S=300). */
+const statusAuthCache = new Map<string, StatusAuthCached>();
+/** Dedupe concurrent sign prompts (status + prefs hydrate in parallel). */
+const statusAuthInflight = new Map<
+  string,
+  Promise<{ wallet: string; message: string; signature: string; owner: string }>
+>();
+
+function parseExpiresFromMessage(message: string): number {
+  const m = /expires:(\d+)/i.exec(message);
+  return m ? Number(m[1]) : 0;
+}
+
+/** Sign action:status once; pollers reuse until near expiry. */
+export async function getStatusAuth(
+  owner: string,
+  signMessage: KeeperSignFn,
+): Promise<{ wallet: string; message: string; signature: string; owner: string }> {
+  const key = owner.trim();
+  const now = Math.floor(Date.now() / 1000);
+  const cached = statusAuthCache.get(key);
+  if (cached && cached.expiresAt - 30 > now) {
+    return {
+      wallet: cached.wallet,
+      message: cached.message,
+      signature: cached.signature,
+      owner: cached.owner,
+    };
+  }
+  const pending = statusAuthInflight.get(key);
+  if (pending) return pending;
+  const promise = (async () => {
+    const auth = await signKeeperAuth(signMessage, "status", key);
+    const expiresAt = parseExpiresFromMessage(auth.message);
+    statusAuthCache.set(key, { ...auth, expiresAt });
+    return auth;
+  })().finally(() => {
+    statusAuthInflight.delete(key);
+  });
+  statusAuthInflight.set(key, promise);
+  return promise;
+}
+
+/** Drop cached status auth (e.g. after wallet disconnect). */
+export function clearStatusAuthCache(owner?: string): void {
+  if (owner) statusAuthCache.delete(owner.trim());
+  else statusAuthCache.clear();
+}
+
 async function keeperFetch(
   path: string,
   init?: RequestInit,
@@ -312,13 +369,50 @@ export function keeperNextBuyAtMs(
   return lastBuy + (interval ?? 7 * 24 * 60 * 60 * 1000);
 }
 
-export async function keeperStatus(owner?: string): Promise<KeeperRunResult> {
-  const q =
-    owner && owner.trim()
-      ? `?owner=${encodeURIComponent(owner.trim())}`
-      : "";
-  const r = await keeperFetch(`/status${q}`, { method: "GET" }, 8000);
+/**
+ * Per-owner keeper status — requires wallet signature (action:status).
+ * Without owner/signMessage returns wallet_required (use keeperHealth for alive).
+ * Status auth is cached ~5min so polling does not re-prompt the wallet.
+ */
+export async function keeperStatus(
+  owner?: string,
+  signMessage?: KeeperSignFn,
+): Promise<KeeperRunResult> {
+  if (!owner?.trim() || !signMessage) {
+    return { ok: false, error: "wallet_required" };
+  }
+  let auth;
+  try {
+    auth = await getStatusAuth(owner.trim(), signMessage);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `sign_rejected: ${msg}` };
+  }
+  const r = await keeperFetch(
+    "/status",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(auth),
+    },
+    8000,
+  );
   if (r.data && r.status !== 0) {
+    if (!r.ok || r.status === 401 || r.status === 403) {
+      // Stale/invalid cache — clear so next poll re-signs
+      clearStatusAuthCache(owner);
+      return {
+        ...r.data,
+        ok: false,
+        error:
+          r.data.error ||
+          r.data.detail ||
+          (r.status === 401 || r.status === 403
+            ? "signature_rejected"
+            : `http_${r.status}`),
+        source: r.data.source ?? "daemon",
+      };
+    }
     return { ...r.data, source: r.data.source ?? "daemon" };
   }
   return { ok: false, error: "keeper_unreachable" };
@@ -374,17 +468,23 @@ export async function keeperPushPrefs(
   return { ok: true, prefs: data.prefs };
 }
 
-export async function keeperGetPrefs(owner?: string): Promise<{
+/** Prefs via signed status (GET /prefs is 401). Reuses status auth cache. */
+export async function keeperGetPrefs(
+  owner?: string,
+  signMessage?: KeeperSignFn,
+): Promise<{
   ok: boolean;
   prefs?: KeeperPrefsPayload;
+  error?: string;
 }> {
-  const q =
-    owner && owner.trim()
-      ? `?owner=${encodeURIComponent(owner.trim())}`
-      : "";
-  const r = await keeperFetch(`/prefs${q}`, { method: "GET" }, 8000);
-  if (!r.ok || !r.data) return { ok: false };
-  const data = r.data as KeeperRunResult & { prefs?: KeeperPrefsPayload };
+  if (!owner?.trim() || !signMessage) {
+    return { ok: false, error: "wallet_required" };
+  }
+  const st = await keeperStatus(owner, signMessage);
+  if (!st.ok) {
+    return { ok: false, error: st.error };
+  }
+  const data = st as KeeperRunResult & { prefs?: KeeperPrefsPayload };
   return { ok: true, prefs: data.prefs };
 }
 

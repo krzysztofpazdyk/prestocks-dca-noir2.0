@@ -1087,7 +1087,6 @@ function startKeeperHttp() {
           multiUser: true,
           port: KEEPER_PORT,
           program: programId().toBase58(),
-          spendLimits: loadSpendLimits(),
         });
         return;
       }
@@ -1102,6 +1101,10 @@ function startKeeperHttp() {
         const spendPublic = { start_usd: spend.start_usd, max_usd: spend.max_usd };
         const qOwner = (query.owner || "").trim();
         if (qOwner) {
+          if (!authorizeMutating(req)) {
+            json(res, req, 401, { ok: false, error: "unauthorized" });
+            return;
+          }
           let owner;
           try {
             owner = assertOwnerPubkey(qOwner);
@@ -1131,24 +1134,11 @@ function startKeeperHttp() {
           });
           return;
         }
-        // Summary only — no other users' prefs/secrets
-        const owners = listOwnerPubkeys().map((o) => ({
-          owner: o,
-          enabled: readEnabled(o),
-          phase: readOwnerState(o).phase || null,
-        }));
-        const enabledOwners = owners.filter((o) => o.enabled);
+        // Public alive summary only — no owners/prefs/spendLimits (proxy also gates)
         json(res, req, 200, {
           ok: true,
           daemon: true,
           multiUser: true,
-          enabled: enabledOwners.length > 0,
-          enabledCount: enabledOwners.length,
-          owners,
-          port: KEEPER_PORT,
-          program: programId().toBase58(),
-          rpc: rpcRedacted,
-          spendLimits: spendPublic,
         });
         return;
       }
@@ -1330,6 +1320,10 @@ function startKeeperHttp() {
         return;
       }
       if (req.method === "GET" && url === "/prefs") {
+        if (!authorizeMutating(req)) {
+          json(res, req, 401, { ok: false, error: "unauthorized" });
+          return;
+        }
         const qOwner = (query.owner || "").trim();
         if (qOwner) {
           let owner;
