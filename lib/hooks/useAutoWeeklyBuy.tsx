@@ -15,8 +15,10 @@ import {
   keeperDisable,
   keeperEnable,
   keeperHealth,
+  keeperHealthInfo,
   keeperNextBuyAtMs,
   keeperStatus,
+  type KeeperMode,
 } from "@/lib/keeper-client";
 import { rankPrefsForApi, readRankPrefs } from "@/lib/rank-prefs";
 import { DEFAULT_SETTINGS, type JevRank } from "@/lib/mock-data";
@@ -54,6 +56,8 @@ export type AutoWeeklyBuyApi = {
   nextLabel: string | null;
   lastTop3: JevRank[];
   due: boolean;
+  /** From daemon /health|/status — same flag that gates real txs. */
+  keeperMode: KeeperMode | null;
 };
 
 const AutoWeeklyBuyContext = createContext<AutoWeeklyBuyApi | null>(null);
@@ -75,6 +79,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const [nextAt, setNextAt] = useState<number | null>(null);
   const [lastTop3, setLastTop3] = useState<JevRank[]>([]);
   const [due, setDue] = useState(false);
+  const [keeperMode, setKeeperMode] = useState<KeeperMode | null>(null);
 
   const predcaRef = useRef(predca);
   predcaRef.current = predca;
@@ -100,9 +105,15 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     void (async () => {
       const owner = ownerRef.current;
       const sign = signMessageRef.current;
-      const st = await keeperStatus(owner ?? undefined, sign ?? undefined);
+      const [st, health] = await Promise.all([
+        keeperStatus(owner ?? undefined, sign ?? undefined),
+        keeperHealthInfo(),
+      ]);
       const local = readAutoWeeklyBuyPref();
       if (cancelled) return;
+      const modeFromStatus =
+        st.mode === "live" || st.mode === "dry-run" ? st.mode : null;
+      setKeeperMode(modeFromStatus ?? health.mode);
       const keeperOn = st.enabled === true;
       const configuredOwner =
         (typeof st.owner === "string" && st.owner.trim()) || null;
@@ -318,6 +329,9 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     const wallet = ownerRef.current;
     const sign = signMessageRef.current;
     const st = await keeperStatus(wallet ?? undefined, sign ?? undefined);
+    if (st.mode === "live" || st.mode === "dry-run") {
+      setKeeperMode(st.mode);
+    }
     const configuredOwner =
       (typeof st.owner === "string" && st.owner.trim()) || null;
     const sameOwner =
@@ -438,6 +452,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       nextLabel,
       lastTop3,
       due,
+      keeperMode,
     }),
     [
       enabled,
@@ -450,6 +465,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       nextLabel,
       lastTop3,
       due,
+      keeperMode,
     ],
   );
 }

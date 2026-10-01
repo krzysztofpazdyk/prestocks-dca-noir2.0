@@ -430,6 +430,19 @@ export function SettingsView() {
           <p className="mt-2 text-xs leading-relaxed text-[#8b95a8] text-justify">
             {t("settings.autoWeeklyHint")}
           </p>
+          {autoBuy.keeperMode ? (
+            <p
+              className={`mt-2 text-[10px] font-medium ${
+                autoBuy.keeperMode === "live"
+                  ? "text-[#2dd4bf]"
+                  : "text-[#fbbf24]"
+              }`}
+            >
+              {autoBuy.keeperMode === "live"
+                ? t("settings.keeperModeLive")
+                : t("settings.keeperModeDryRun")}
+            </p>
+          ) : null}
           {autoBuy.nextLabel && autoBuy.enabled ? (
             <p className="mt-2 text-[10px] text-[#2dd4bf]">
               {t("auto.status.next", { when: autoBuy.nextLabel })}

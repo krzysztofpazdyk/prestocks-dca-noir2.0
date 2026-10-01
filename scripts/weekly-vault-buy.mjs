@@ -150,6 +150,16 @@ const LEGACY_PREFS_PATH = join(CONFIG_DIR, "prefs.json");
 const SPEND_LIMITS_PATH = join(CONFIG_DIR, "spend-limits.json");
 const LOCK_PATH = join(CONFIG_DIR, "buy.lock");
 const KEEPER_PORT = Number(process.env.KEEPER_PORT || 8791);
+
+/**
+ * Trade mode exposed on /health + /status.
+ * Must match whether executeBuy actually sends txs.
+ * No dry-run path today — buys always live.
+ */
+function keeperMode() {
+  return "live";
+}
+
 const LOCK_STALE_MS = 5 * 60 * 1000;
 const TOKEN_PATH = join(CONFIG_DIR, "keeper.token");
 const TOKEN_PATH_LEGACY = join(CONFIG_DIR, "http_token");
@@ -1085,6 +1095,7 @@ function startKeeperHttp() {
           enabledCount: enabledOwners.length,
           daemon: true,
           multiUser: true,
+          mode: keeperMode(),
           port: KEEPER_PORT,
           program: programId().toBase58(),
         });
@@ -1126,6 +1137,7 @@ function startKeeperHttp() {
             enabled: readEnabled(owner),
             daemon: true,
             multiUser: true,
+            mode: keeperMode(),
             port: KEEPER_PORT,
             program: programId().toBase58(),
             rpc: rpcRedacted,
@@ -1139,6 +1151,7 @@ function startKeeperHttp() {
           ok: true,
           daemon: true,
           multiUser: true,
+          mode: keeperMode(),
         });
         return;
       }
@@ -1386,6 +1399,7 @@ async function main() {
       pid: process.pid,
       daemon: true,
       multiUser: true,
+      mode: keeperMode(),
       port: KEEPER_PORT,
       program: programId().toBase58(),
       rpc: /devnet/i.test(rpcUrl()) ? "devnet" : "redacted",

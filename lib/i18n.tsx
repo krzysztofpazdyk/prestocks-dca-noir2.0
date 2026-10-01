@@ -180,6 +180,9 @@ const pl: Dict = {
     "Kontynuacja podzieli ${amount} USDC z vaulta po równo na 3 spółki PreStock. Dostaniesz różną liczbę akcji, zależnie od ceny każdej. Ta transakcja uruchamia cotygodniowy harmonogram. Późniejszych zakupów nie musisz już potwierdzać.",
   "settings.autoWeeklyConfirmOk": "Kontynuuj",
   "settings.autoWeeklyConfirmCancel": "Anuluj",
+  "settings.keeperModeLive": "Tryb: Live (prawdziwe zakupy)",
+  "settings.keeperModeDryRun": "Tryb: Dry-run (bez transakcji)",
+  "settings.keeperModeUnknown": "Tryb keepersa: nieznany",
   "settings.weeklySplit":
     "Po równo na 3 spółki z top-3 (~${amount} USDC na każdą; liczba akcji zależy od ceny)",
   "settings.onChainBudget": "· on-chain:",
@@ -394,6 +397,9 @@ const en: Dict = {
     "Continuing will split ${amount} USDC from the vault equally across 3 PreStock companies. You will receive a different number of shares depending on each price. This transaction starts the weekly schedule. You will not need to confirm later purchases.",
   "settings.autoWeeklyConfirmOk": "Continue",
   "settings.autoWeeklyConfirmCancel": "Cancel",
+  "settings.keeperModeLive": "Mode: Live (real buys)",
+  "settings.keeperModeDryRun": "Mode: Dry-run (no transactions)",
+  "settings.keeperModeUnknown": "Keeper mode: unknown",
   "settings.weeklySplit":
     "Split equally across 3 top-3 companies (~${amount} USDC each; share count depends on price)",
   "settings.onChainBudget": "· on-chain:",

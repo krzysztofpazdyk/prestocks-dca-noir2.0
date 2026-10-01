@@ -10,6 +10,8 @@ function keeperUrl(): string {
   return DEFAULT_KEEPER;
 }
 
+export type KeeperMode = "live" | "dry-run";
+
 export type KeeperRunResult = {
   ok: boolean;
   skipped?: boolean;
@@ -33,6 +35,8 @@ export type KeeperRunResult = {
   phase?: string;
   source?: "daemon" | "file" | string;
   daemon?: boolean;
+  /** live = real execute_buy; dry-run = no txs (must match daemon gate). */
+  mode?: KeeperMode | string;
   detail?: string;
 };
 
@@ -186,9 +190,25 @@ async function keeperFetch(
   }
 }
 
-export async function keeperHealth(): Promise<boolean> {
+function parseKeeperMode(raw: unknown): KeeperMode | null {
+  if (raw === "live" || raw === "dry-run") return raw;
+  return null;
+}
+
+/** Public keeper /health — ok + trade mode (same flag as buy path). */
+export async function keeperHealthInfo(): Promise<{
+  ok: boolean;
+  mode: KeeperMode | null;
+}> {
   const r = await keeperFetch("/health", { method: "GET" }, 5000);
-  return r.ok;
+  if (!r.ok) return { ok: false, mode: null };
+  const mode = parseKeeperMode(r.data?.mode) ?? "live";
+  return { ok: true, mode };
+}
+
+export async function keeperHealth(): Promise<boolean> {
+  const info = await keeperHealthInfo();
+  return info.ok;
 }
 
 export async function keeperRegister(
