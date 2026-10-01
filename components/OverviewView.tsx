@@ -293,7 +293,33 @@ export function OverviewView() {
     connected &&
     !!predca.mint &&
     (predca.status === "ready" || predca.status === "no_config");
-  const depositDisabled = predca.txPending || !canDeposit;
+  const ownerUsdcCap =
+    displayOwnerUsdc != null && Number.isFinite(displayOwnerUsdc)
+      ? displayOwnerUsdc
+      : null;
+  const vaultUsdcCap =
+    onChainVaultUsdc != null && Number.isFinite(onChainVaultUsdc)
+      ? onChainVaultUsdc
+      : null;
+  const depositOverCap =
+    ownerUsdcCap != null &&
+    Number.isFinite(depositAmt) &&
+    depositAmt > ownerUsdcCap;
+  const withdrawOverCap =
+    vaultUsdcCap != null &&
+    Number.isFinite(withdrawAmt) &&
+    withdrawAmt > vaultUsdcCap;
+  const depositDisabled =
+    predca.txPending ||
+    !canDeposit ||
+    !Number.isFinite(depositAmt) ||
+    depositAmt <= 0 ||
+    depositOverCap;
+  const withdrawDisabled =
+    predca.txPending ||
+    !Number.isFinite(withdrawAmt) ||
+    withdrawAmt <= 0 ||
+    withdrawOverCap;
   const showWithdraw = onChainReady; // account exists; enablement same as before (txPending only)
   const vaultTooLow =
     availableVaultUsdc == null ||
@@ -443,22 +469,38 @@ export function OverviewView() {
                   type="number"
                   min={0.000001}
                   step={1}
+                  max={ownerUsdcCap ?? undefined}
                   value={depositAmt}
-                  onChange={(e) => setDepositAmt(Number(e.target.value))}
-                  disabled={depositDisabled}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (!Number.isFinite(n)) {
+                      setDepositAmt(n);
+                      return;
+                    }
+                    if (ownerUsdcCap != null && n > ownerUsdcCap) {
+                      setDepositAmt(ownerUsdcCap);
+                      return;
+                    }
+                    setDepositAmt(n);
+                  }}
+                  disabled={predca.txPending || !canDeposit}
                   className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
                 />
                 <button
                   type="button"
                   disabled={depositDisabled}
-                  onClick={() =>
+                  onClick={() => {
+                    const amt =
+                      ownerUsdcCap != null
+                        ? Math.min(depositAmt, ownerUsdcCap)
+                        : depositAmt;
                     void predca.depositUsdc(
-                      depositAmt,
+                      amt,
                       predca.status === "no_config"
                         ? purchaseAmount
                         : undefined,
-                    )
-                  }
+                    );
+                  }}
                   className="rounded border border-[#2dd4bf44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
                 >
                   {t("predca.deposit")}
@@ -476,15 +518,33 @@ export function OverviewView() {
                   type="number"
                   min={0.000001}
                   step={1}
+                  max={vaultUsdcCap ?? undefined}
                   value={withdrawAmt}
-                  onChange={(e) => setWithdrawAmt(Number(e.target.value))}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (!Number.isFinite(n)) {
+                      setWithdrawAmt(n);
+                      return;
+                    }
+                    if (vaultUsdcCap != null && n > vaultUsdcCap) {
+                      setWithdrawAmt(vaultUsdcCap);
+                      return;
+                    }
+                    setWithdrawAmt(n);
+                  }}
                   disabled={predca.txPending}
                   className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#a78bfa] outline-none focus:border-[#a78bfa66] disabled:opacity-40"
                 />
                 <button
                   type="button"
-                  disabled={predca.txPending}
-                  onClick={() => void predca.withdrawUsdc(withdrawAmt)}
+                  disabled={withdrawDisabled}
+                  onClick={() => {
+                    const amt =
+                      vaultUsdcCap != null
+                        ? Math.min(withdrawAmt, vaultUsdcCap)
+                        : withdrawAmt;
+                    void predca.withdrawUsdc(amt);
+                  }}
                   className="rounded border border-[#a78bfa44] bg-[#0c0e12] px-3 py-1.5 text-[10px] uppercase tracking-wider text-[#a78bfa] hover:bg-[#a78bfa11] disabled:opacity-40"
                 >
                   {t("predca.withdraw")}
@@ -504,6 +564,16 @@ export function OverviewView() {
             {predca.ownerUsdc != null && predca.ownerUsdc <= 0 && (
               <p className="text-[10px] text-[#fbbf24]">
                 {t("predca.hintZeroUsdc", { mint: predca.mintHint })}
+              </p>
+            )}
+            {depositOverCap && ownerUsdcCap != null && (
+              <p className="text-[10px] text-[#fbbf24]">
+                Max deposit: {formatUsd(ownerUsdcCap)} USDC (wallet balance)
+              </p>
+            )}
+            {withdrawOverCap && vaultUsdcCap != null && (
+              <p className="text-[10px] text-[#fbbf24]">
+                Max withdraw: {formatUsd(vaultUsdcCap)} USDC (vault balance)
               </p>
             )}
           </div>
