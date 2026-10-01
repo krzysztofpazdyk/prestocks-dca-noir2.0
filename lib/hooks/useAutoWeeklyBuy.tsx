@@ -15,6 +15,7 @@ import {
   keeperDisable,
   keeperEnable,
   keeperHealth,
+  keeperNextBuyAtMs,
   keeperStatus,
 } from "@/lib/keeper-client";
 import { rankPrefsForApi, readRankPrefs } from "@/lib/rank-prefs";
@@ -87,6 +88,10 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   enabledRef.current = enabled;
   const tRef = useRef(t);
   tRef.current = t;
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
+  const nextAtRef = useRef<number | null>(null);
+  nextAtRef.current = nextAt;
   const ignoreOffUntilRef = useRef(0);
 
   useEffect(() => {
@@ -268,11 +273,15 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       });
       setPhase("ok");
       setDue(false);
-      setNextAt(Date.now() + WEEK_MS);
+      // A just-completed enable buy is the anchor; do not reuse a stale
+      // pre-enable on-chain RunRecord while the keeper status catches up.
+      const nextBuyMs = keeperNextBuyAtMs(ran) ?? Date.now() + WEEK_MS;
+      setNextAt(nextBuyMs);
       setMessage(
         tRef.current("auto.status.ok", {
           amount: (ran.amountUsd ?? amount).toFixed(2),
           tokens: (ran.names ?? []).join(" · "),
+          nextBuy: formatWarsawWhen(nextBuyMs, localeRef.current),
         }),
       );
     } catch (e) {
@@ -337,9 +346,14 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       setMessage(tRef.current("auto.status.keeperDown"));
       return;
     }
-    if (st.nextAt) {
-      const next = Date.parse(st.nextAt);
-      if (Number.isFinite(next)) setNextAt(next);
+    const keeperNextBuyMs = keeperNextBuyAtMs(st);
+    const nextBuyMs =
+      keeperNextBuyMs ??
+      (nextAtRef.current == null
+        ? keeperNextBuyAtMs(st, predcaRef.current.lastPurchaseOnChain?.ts ?? null)
+        : null);
+    if (nextBuyMs != null) {
+      setNextAt(nextBuyMs);
       setDue(false);
     }
     if (st.phase === "ok" && st.signature) {
@@ -348,10 +362,15 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         setLastTop3(st.names.map((name) => ({ name, score: 0 })));
       }
       if (st.amountUsd != null && st.names) {
+        const nextBuy = nextBuyMs ?? nextAtRef.current;
         setMessage(
           tRef.current("auto.status.ok", {
             amount: st.amountUsd.toFixed(2),
             tokens: st.names.join(" · "),
+            nextBuy:
+              nextBuy != null
+                ? formatWarsawWhen(nextBuy, localeRef.current)
+                : "—",
           }),
         );
       }

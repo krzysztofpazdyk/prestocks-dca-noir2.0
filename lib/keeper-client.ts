@@ -18,7 +18,16 @@ export type KeeperRunResult = {
   names?: string[];
   amountUsd?: number;
   error?: string;
-  nextAt?: string;
+  nextAt?: string | number;
+  /** Keeper/on-chain schedule aliases used by older status payloads. */
+  next_buy_at?: string | number;
+  lastRunTs?: string | number;
+  last_run_ts?: string | number;
+  lastBuy?: string | number;
+  last_buy?: string | number;
+  interval?: string | number;
+  intervalSec?: string | number;
+  interval_sec?: string | number;
   enabled?: boolean;
   owner?: string;
   phase?: string;
@@ -252,6 +261,57 @@ export async function keeperDisable(
 /**
  * Live keeper `/status` (public, redacted). Pass owner for per-wallet status.
  */
+function timestampMs(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+  const numeric = Number(value.trim());
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric < 1e12 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function intervalMs(value: unknown): number | null {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  // Keeper intervals are normally seconds; accept milliseconds for API variants.
+  return seconds < 1e10 ? seconds * 1000 : seconds;
+}
+
+/**
+ * Resolve the next purchase from keeper status, tolerating current and legacy
+ * snake_case payloads, then fall back to the on-chain RunRecord timestamp.
+ */
+export function keeperNextBuyAtMs(
+  status: KeeperRunResult,
+  fallbackLastBuyTs?: number | null,
+): number | null {
+  const direct = [status.nextAt, status.next_buy_at]
+    .map(timestampMs)
+    .find((value): value is number => value != null);
+  if (direct != null) return direct;
+
+  const lastBuy = [
+    status.lastRunTs,
+    status.last_run_ts,
+    status.lastBuy,
+    status.last_buy,
+  ]
+    .map(timestampMs)
+    .find((value): value is number => value != null)
+    ?? timestampMs(fallbackLastBuyTs);
+  if (lastBuy == null) return null;
+
+  const interval = [status.intervalSec, status.interval_sec, status.interval]
+    .map(intervalMs)
+    .find((value): value is number => value != null);
+  return lastBuy + (interval ?? 7 * 24 * 60 * 60 * 1000);
+}
+
 export async function keeperStatus(owner?: string): Promise<KeeperRunResult> {
   const q =
     owner && owner.trim()
