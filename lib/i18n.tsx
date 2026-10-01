@@ -200,7 +200,7 @@ const pl: Dict = {
   "settings.exclusions": "Wykluczenia (np. xAI, OpenAI) — stosowane w rankingu",
   "settings.buyDespiteIpo": "Kup PreStock mimo odbytego IPO",
   "settings.deadlineInvalid": "Uwzględniaj tokeny z terminem ważności (po dacie końcowej stają się bezwartościowe).",
-  "settings.ipoPremium": "Premia IPO ma znaczenie",
+  "settings.ipoPremium": "Premia IPO ma znaczenie (uwzględniaj różnicę wyceny tokenu względem rynku, np. −20% / +34%).",
   "settings.prefsDirtyHint":
     "Zmieniono ustawienia. Aby zapisać je u keepersa, trzeba podpisać wiadomość w portfelu.",
   "settings.prefsSignSave": "Podpisz i zapisz",
@@ -417,7 +417,7 @@ const en: Dict = {
   "settings.exclusions": "Exclusions (e.g. xAI, OpenAI) — applied to ranking",
   "settings.buyDespiteIpo": "Buy PreStock even after IPO",
   "settings.deadlineInvalid": "Include tokens with an expiry date (they become worthless after the end date).",
-  "settings.ipoPremium": "IPO premium matters",
+  "settings.ipoPremium": "IPO premium matters (factor in token vs market pricing gap, e.g. −20% / +34%).",
   "settings.prefsDirtyHint":
     "Settings changed. Sign a wallet message to save them to the keeper.",
   "settings.prefsSignSave": "Sign & save",
