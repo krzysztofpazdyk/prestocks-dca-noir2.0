@@ -608,19 +608,21 @@ function Toggle({
       type="button"
       aria-pressed={checked}
       onClick={() => onChange(!checked)}
-      className="flex w-full items-center justify-between text-left font-sans text-sm font-medium tracking-normal text-[#e8eef5]"
+      className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-start gap-x-4 text-left font-sans text-sm font-medium tracking-normal text-[#e8eef5]"
     >
-      <span className="font-sans text-sm font-medium tracking-normal">{label}</span>
+      <span className="min-w-0 whitespace-normal break-words font-sans text-sm font-medium leading-snug tracking-normal">
+        {label}
+      </span>
       <span
-          className={`relative h-6 w-11 rounded-full transition ${
-            checked ? "bg-[#2dd4bf]" : "bg-[#1e2633]"
+        className={`relative mt-0.5 h-6 w-11 shrink-0 justify-self-end rounded-full transition ${
+          checked ? "bg-[#2dd4bf]" : "bg-[#1e2633]"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${
+            checked ? "left-5" : "left-0.5"
           }`}
-        >
-          <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition ${
-              checked ? "left-5" : "left-0.5"
-            }`}
-          />
+        />
       </span>
     </button>
   );
