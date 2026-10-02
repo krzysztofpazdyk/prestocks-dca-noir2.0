@@ -836,16 +836,25 @@ async function rankTop3(owner) {
   };
 }
 
-async function nextRunIndex(program, owner, pid) {
-  for (let i = 0; i <= 64; i++) {
-    const [pda] = runRecordPda(owner, i, pid);
-    try {
-      await program.account.runRecord.fetch(pda);
-    } catch {
-      return i;
+const RUN_RECORD_SCAN_CAP = 1024;
+const RUN_RECORD_BATCH = 100;
+
+/** First empty run PDA. UserConfig has no run counter. Throws if the cap is full. */
+async function nextRunIndex(connection, owner, pid) {
+  for (let start = 0; start < RUN_RECORD_SCAN_CAP; start += RUN_RECORD_BATCH) {
+    const count = Math.min(RUN_RECORD_BATCH, RUN_RECORD_SCAN_CAP - start);
+    const pdas = [];
+    for (let i = 0; i < count; i++) {
+      pdas.push(runRecordPda(owner, start + i, pid)[0]);
+    }
+    const infos = await connection.getMultipleAccountsInfo(pdas);
+    for (let j = 0; j < infos.length; j++) {
+      if (!infos[j]) return start + j;
     }
   }
-  return 65;
+  throw new Error(
+    `Brak wolnego indeksu RunRecord (limit skanu ${RUN_RECORD_SCAN_CAP}).`,
+  );
 }
 
 async function ensureAtas(connection, owner, mints, payer) {
@@ -1001,7 +1010,7 @@ async function runOnce(opts) {
   const totalDebit2 = amountEach2 * 3;
   enforceSpendLimits(budgetUsd2, totalDebit2, loadSpendLimits());
 
-  const runIndex = await nextRunIndex(program, owner, pid);
+  const runIndex = await nextRunIndex(connection, owner, pid);
   await ensureAtas(connection, owner, mints, keeper);
 
   writeStatus({

@@ -19,6 +19,7 @@ import {
   keeperNextBuyAtMs,
   keeperStatus,
   type KeeperMode,
+  type KeeperRunResult,
 } from "@/lib/keeper-client";
 import { rankPrefsForApi, readRankPrefs } from "@/lib/rank-prefs";
 import { DEFAULT_SETTINGS, type JevRank } from "@/lib/mock-data";
@@ -60,6 +61,16 @@ export type AutoWeeklyBuyApi = {
 
 const AutoWeeklyBuyContext = createContext<AutoWeeklyBuyApi | null>(null);
 
+/** Stable id for a keeper purchase so a new run refreshes on-chain history once. */
+function keeperRunMarker(st: KeeperRunResult): string | null {
+  if (typeof st.signature === "string" && st.signature.length > 0) {
+    return `sig:${st.signature}`;
+  }
+  const ts = st.lastRunTs ?? st.last_run_ts ?? st.lastBuy ?? st.last_buy;
+  if (ts == null || ts === "") return null;
+  return `ts:${String(ts)}`;
+}
+
 /** Module lock — Strict Mode remounts must not double-enable. */
 let cycleInFlight = false;
 
@@ -98,6 +109,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const ignoreOffUntilRef = useRef(0);
   /** Bumped on every publicKey change — ignore in-flight status/tick/startCycle. */
   const statusEpochRef = useRef(0);
+  /** Previous keeper purchase marker. A change means a new on-chain run. */
+  const seenKeeperRunRef = useRef<string | null>(null);
 
   const resetBannerState = useCallback(() => {
     setPhase("idle");
@@ -111,6 +124,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
 
   useEffect(() => {
     const epoch = ++statusEpochRef.current;
+    seenKeeperRunRef.current = null;
     // Drop prior wallet banner/status immediately; stay off until fresh status.
     resetBannerState();
     setPrefsReady(false);
@@ -318,6 +332,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       );
       setPhase("ok");
       setDue(false);
+      seenKeeperRunRef.current = keeperRunMarker(ran);
+      void predcaRef.current.refresh();
       // A just-completed enable buy is the anchor; do not reuse a stale
       // pre-enable on-chain RunRecord while the keeper status catches up.
       const nextBuyMs = keeperNextBuyAtMs(ran) ?? Date.now() + WEEK_MS;
@@ -367,6 +383,11 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     const sign = signMessageRef.current;
     const st = await keeperStatus(wallet ?? undefined, sign ?? undefined);
     if (statusEpochRef.current !== epoch) return;
+    const runMarker = keeperRunMarker(st);
+    if (runMarker && runMarker !== seenKeeperRunRef.current) {
+      seenKeeperRunRef.current = runMarker;
+      void predcaRef.current.refresh();
+    }
     if (st.mode === "live" || st.mode === "dry-run") {
       setKeeperMode(st.mode);
     }

@@ -29,7 +29,7 @@ export const PREDCA_ERROR_PL: Record<number, string> = {
   6001: "Kwota musi być większa od zera.",
   6002: "Niewystarczające saldo w vault.",
   6003: "Nieprawidłowy budżet tygodniowy (musi być > 0).",
-  6004: "RunRecord już istnieje dla tego indeksu.",
+  6004: "Indeks RunRecord zajęty. Spróbuj ponownie.",
   6005: "Mint authority musi być PDA mint_auth programu.",
   6006: "Mint nie zgadza się z kontem w instrukcji.",
   6007: "Duplikaty mintów w top-3.",
@@ -256,28 +256,97 @@ export async function fetchOwnerUsdcBalance(
 }
 
 /**
- * Load RunRecords for owner by scanning PDA indices.
- * UserConfig has last_run_ts (not lastRunIndex in current IDL), so we fetch
- * runRecordPda(owner, i) for i = 0,1,… until the first missing account
- * (contiguous indices from simulate_buy / record_run).
- * Optional maxIndex caps the scan (default 64).
+ * How many contiguous run indices to probe (0 .. cap-1).
+ * UserConfig stores last_run_ts and has no run counter, so the next index is
+ * the first empty run PDA. Weekly buys stay far below this; the scan stops
+ * at the first gap instead of always walking the cap.
  */
+export const RUN_RECORD_SCAN_CAP = 1024;
+const RUN_RECORD_BATCH = 100;
+
+export const RUN_INDEX_TAKEN_MSG = "Indeks RunRecord zajęty. Spróbuj ponownie.";
+
+/** Index of the first null slot. `start` is the on-chain index of slots[0]. */
+export function firstFreeRunIndex(
+  slots: ReadonlyArray<unknown>,
+  start = 0,
+): number | null {
+  for (let i = 0; i < slots.length; i++) {
+    if (slots[i] == null) return start + i;
+  }
+  return null;
+}
+
+export function isRunAlreadyExists(err: unknown): boolean {
+  if (err == null) return false;
+  const e = err as {
+    error?: { errorCode?: { number?: number; code?: string } };
+    message?: string;
+    logs?: string[];
+  };
+  const code = e.error?.errorCode;
+  if (code?.number === 6004 || code?.code === "RunAlreadyExists") return true;
+  const blob = `${e.message ?? ""}\n${Array.isArray(e.logs) ? e.logs.join("\n") : ""}\n${String(err)}`;
+  return /RunAlreadyExists|RunRecord already exists|Error Number: 6004|custom program error: 0x1774|already in use/i.test(
+    blob,
+  );
+}
+
+export type RunRecordScan = {
+  records: RunRecordData[];
+  /** First missing PDA, or null when every index below the cap is occupied. */
+  nextIndex: number | null;
+};
+
+/**
+ * Load RunRecords for owner by scanning PDA indices in batches.
+ * Stops at the first missing account (simulate_buy / execute_buy use the
+ * next free index). `scanCap` is an exclusive upper bound, not an inclusive
+ * last index.
+ */
+export async function scanRunRecords(
+  program: Program<Predca>,
+  owner: PublicKey,
+  scanCap = RUN_RECORD_SCAN_CAP,
+): Promise<RunRecordScan> {
+  const records: RunRecordData[] = [];
+  const cap = Math.max(0, Math.floor(scanCap));
+  for (let start = 0; start < cap; start += RUN_RECORD_BATCH) {
+    const count = Math.min(RUN_RECORD_BATCH, cap - start);
+    const pdas: PublicKey[] = [];
+    for (let i = 0; i < count; i++) {
+      pdas.push(runRecordPda(owner, start + i)[0]);
+    }
+    const found = await program.account.runRecord.fetchMultiple(pdas);
+    const freeAt = firstFreeRunIndex(found, start);
+    const occupied =
+      freeAt == null ? found.length : Math.max(0, freeAt - start);
+    for (let j = 0; j < occupied; j++) {
+      const acc = found[j];
+      if (acc != null) records.push(acc as unknown as RunRecordData);
+    }
+    if (freeAt != null) return { records, nextIndex: freeAt };
+  }
+  return { records, nextIndex: null };
+}
+
 export async function fetchRunRecords(
   program: Program<Predca>,
   owner: PublicKey,
-  maxIndex = 64,
+  scanCap = RUN_RECORD_SCAN_CAP,
 ): Promise<RunRecordData[]> {
-  const out: RunRecordData[] = [];
-  for (let i = 0; i <= maxIndex; i++) {
-    const [pda] = runRecordPda(owner, i);
-    try {
-      const acc = await program.account.runRecord.fetch(pda);
-      out.push(acc as unknown as RunRecordData);
-    } catch {
-      break;
-    }
-  }
-  return out;
+  const { records } = await scanRunRecords(program, owner, scanCap);
+  return records;
+}
+
+/** Next free run PDA index, read on-chain. Null when the scan cap is full. */
+export async function findNextRunIndex(
+  program: Program<Predca>,
+  owner: PublicKey,
+  scanCap = RUN_RECORD_SCAN_CAP,
+): Promise<number | null> {
+  const { nextIndex } = await scanRunRecords(program, owner, scanCap);
+  return nextIndex;
 }
 
 export function shortPk(pk: PublicKey | string, n = 4): string {
@@ -314,6 +383,9 @@ export function parseAnchorError(err: unknown): string {
   }
   if (e.error?.errorMessage) {
     const em = e.error.errorMessage;
+    if (/RunRecord already exists|RunAlreadyExists/i.test(em)) {
+      return RUN_INDEX_TAKEN_MSG;
+    }
     const mapped = mapCommonSolanaError(em);
     if (mapped) return mapped;
     return em;
