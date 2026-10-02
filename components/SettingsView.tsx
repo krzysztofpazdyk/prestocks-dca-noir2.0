@@ -231,7 +231,7 @@ export function SettingsView() {
   ]);
 
   // Persist weekly to this wallet's key. Disconnected edits stay in React state.
-  // On-chain budget still updates only when enabling weekly auto-buy (startCycle).
+  // On-chain budget is a separate step, and only after UserConfig exists.
   useEffect(() => {
     if (!weeklyReady || !ownerBase58) return;
     const id = window.setTimeout(() => {
@@ -262,32 +262,22 @@ export function SettingsView() {
 
   const BUDGET_EPS = 0.000001;
   const onChainWeekly = predca.weeklyBudgetUsd;
+  // Hide Save until UserConfig exists. A null on-chain budget is "no account",
+  // not a dirty value — that used to send initialize_user with no deposit.
   const budgetDirtyOnChain =
-    onChainWeekly == null
-      ? weekly > 0
-      : Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
+    onChainWeekly != null &&
+    Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
 
   async function saveWeeklyBudgetOnChain() {
     writeWeeklyBudgetUsd(weekly, ownerBase58);
     predca.clearMessages();
-    if (!connected || !predca.mint) return;
+    if (!connected || !predca.mint || !predca.config) return;
     await predca.setWeeklyBudget(weekly);
   }
 
-  let budgetBtnLabel: string;
-  if (!connected) {
-    budgetBtnLabel = t("settings.connectForBudget");
-  } else if (!predca.mint) {
-    budgetBtnLabel = t("settings.noMint");
-  } else if (predca.status === "no_config") {
-    budgetBtnLabel = predca.txPending
-      ? t("settings.initPending")
-      : t("settings.initBudget");
-  } else {
-    budgetBtnLabel = predca.txPending
-      ? t("settings.savingOnChain")
-      : t("settings.saveOnChain");
-  }
+  const budgetBtnLabel = predca.txPending
+    ? t("settings.savingOnChain")
+    : t("settings.saveOnChain");
 
   async function signAndSavePrefs() {
     setPrefsSaveMsg(null);
@@ -469,6 +459,11 @@ export function SettingsView() {
             )}
           </p>
         </label>
+        {connected && predca.status === "no_config" ? (
+          <p className="text-xs leading-relaxed text-[#8b95a8]">
+            {t("settings.budgetNeedsDeposit")}
+          </p>
+        ) : null}
         {budgetDirtyOnChain && connected && predca.mint ? (
           <button
             type="button"
