@@ -339,7 +339,7 @@ export function SettingsView() {
         <p className="text-[10px] uppercase tracking-[0.2em] text-[#a78bfa]">
           {t("settings.kicker")}
         </p>
-        <h1 className="mt-1 text-2xl font-bold text-[#e8eef5]">{t("settings.title")}</h1>
+        <h1 className="mt-1 text-xl font-semibold text-[#e8eef5]">{t("settings.title")}</h1>
         <p className="mt-1 text-xs text-[#8b95a8]">{t("settings.intro")}</p>
       </div>
 
@@ -355,7 +355,7 @@ export function SettingsView() {
       )}
 
       <label className="block space-y-2 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
-        <span className="text-[11px] uppercase tracking-wider text-[#8b95a8]">
+        <span className="text-[11px] uppercase tracking-[0.15em] text-[#8b95a8]">
           {t("settings.exclusions")}
         </span>
         <input
@@ -426,7 +426,7 @@ export function SettingsView() {
 
       <div className="space-y-2 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
         <label className="block space-y-2">
-          <span className="text-[11px] uppercase tracking-wider text-[#8b95a8]">
+          <span className="text-[11px] uppercase tracking-[0.15em] text-[#8b95a8]">
             {t("settings.weeklyAmount")}
           </span>
           <input
@@ -469,7 +469,7 @@ export function SettingsView() {
             type="button"
             disabled={predca.txPending}
             onClick={() => void saveWeeklyBudgetOnChain()}
-            className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-xs uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
+            className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
           >
             {budgetBtnLabel}
           </button>
@@ -560,7 +560,7 @@ export function SettingsView() {
               <button
                 type="button"
                 onClick={() => setAutoConfirmOpen(false)}
-                className="rounded border border-[#1e2633] px-4 py-2 text-xs uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5]"
+                className="rounded border border-[#1e2633] px-4 py-2 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5]"
               >
                 {t("settings.autoWeeklyConfirmCancel")}
               </button>
@@ -570,7 +570,7 @@ export function SettingsView() {
                   setAutoConfirmOpen(false);
                   void autoBuy.startCycle(weekly);
                 }}
-                className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-4 py-2 text-xs uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11]"
+                className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-4 py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11]"
               >
                 {t("settings.autoWeeklyConfirmOk")}
               </button>
@@ -581,7 +581,7 @@ export function SettingsView() {
 
       <section className="space-y-3 rounded-lg border border-[#2dd4bf33] bg-[#141820] p-5">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[11px] uppercase tracking-wider text-[#2dd4bf]">
+          <h2 className="text-[11px] uppercase tracking-[0.15em] text-[#2dd4bf]">
             {t("settings.byokTitle")}
           </h2>
           <span className="mono-num text-[10px] text-[#8b95a8]">
@@ -611,7 +611,7 @@ export function SettingsView() {
             <button
               type="button"
               onClick={() => setShowTypesafe((v) => !v)}
-              className="rounded border border-[#1e2633] px-3 text-xs text-[#8b95a8] hover:text-[#e8eef5]"
+              className="rounded border border-[#1e2633] px-3 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5]"
             >
               {showTypesafe ? t("settings.hide") : t("settings.show")}
             </button>
@@ -639,7 +639,7 @@ export function SettingsView() {
             <button
               type="button"
               onClick={() => setShowXai((v) => !v)}
-              className="rounded border border-[#1e2633] px-3 text-xs text-[#8b95a8] hover:text-[#e8eef5]"
+              className="rounded border border-[#1e2633] px-3 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5]"
             >
               {showXai ? t("settings.hide") : t("settings.show")}
             </button>
@@ -649,7 +649,7 @@ export function SettingsView() {
         <button
           type="button"
           onClick={saveByok}
-          className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-xs uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11]"
+          className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11]"
         >
           {byokSaved ? t("settings.keysSaved") : t("settings.saveKeys")}
         </button>
@@ -672,9 +672,9 @@ function Toggle({
       type="button"
       aria-pressed={checked}
       onClick={() => onChange(!checked)}
-      className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-start gap-x-4 text-left font-sans text-sm font-medium tracking-normal text-[#e8eef5]"
+      className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-start gap-x-4 text-left font-sans text-sm tracking-normal text-[#e8eef5]"
     >
-      <span className="min-w-0 whitespace-normal break-words font-sans text-sm font-medium leading-snug tracking-normal">
+      <span className="min-w-0 whitespace-normal break-words font-sans text-sm leading-snug tracking-normal">
         {label}
       </span>
       <span
