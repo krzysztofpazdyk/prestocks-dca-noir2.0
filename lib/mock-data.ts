@@ -110,7 +110,7 @@ export const HISTORY_RUNS: HistoryRun[] = [
 ];
 
 export const DEFAULT_SETTINGS = {
-  weeklyAmountUsd: 1,
+  weeklyAmountUsd: 150,
   exclusions: ["xAI"],
   deadlineInvalid: false,
   ipoPremiumMatters: false,

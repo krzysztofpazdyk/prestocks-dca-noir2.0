@@ -47,6 +47,12 @@ const EMPTY_META: AutoBuyMeta = {
   cycleBudgetUsd: 0,
 };
 
+/** Scope LS by wallet so auto-buy / budget never leak across pubkeys. */
+export function scopedLsKey(base: string, owner?: string | null): string {
+  if (owner && owner.length > 0) return `${base}.${owner}`;
+  return base;
+}
+
 function readBool(key: string, fallback: boolean): boolean {
   try {
     if (typeof localStorage === "undefined") return fallback;
@@ -71,15 +77,18 @@ function writeBool(key: string, value: boolean): void {
 }
 
 /** Default OFF — enabling is an explicit opt-in that starts the weekly cycle. */
-export function readAutoWeeklyBuy(): boolean {
-  return readBool(LS_AUTO_WEEKLY_BUY, DEFAULT_SETTINGS.autoWeeklyBuy);
+export function readAutoWeeklyBuy(owner?: string | null): boolean {
+  return readBool(
+    scopedLsKey(LS_AUTO_WEEKLY_BUY, owner),
+    DEFAULT_SETTINGS.autoWeeklyBuy,
+  );
 }
 
-/** `null` = never set in this browser (do not treat as explicit off). */
-export function readAutoWeeklyBuyPref(): boolean | null {
+/** `null` = never set for this wallet (do not treat as explicit off). */
+export function readAutoWeeklyBuyPref(owner?: string | null): boolean | null {
   try {
     if (typeof localStorage === "undefined") return null;
-    const v = localStorage.getItem(LS_AUTO_WEEKLY_BUY);
+    const v = localStorage.getItem(scopedLsKey(LS_AUTO_WEEKLY_BUY, owner));
     if (v == null) return null;
     if (v === "true" || v === "1") return true;
     if (v === "false" || v === "0") return false;
@@ -89,14 +98,31 @@ export function readAutoWeeklyBuyPref(): boolean | null {
   }
 }
 
-export function writeAutoWeeklyBuy(value: boolean): void {
-  writeBool(LS_AUTO_WEEKLY_BUY, value);
+export function writeAutoWeeklyBuy(
+  value: boolean,
+  owner?: string | null,
+): void {
+  writeBool(scopedLsKey(LS_AUTO_WEEKLY_BUY, owner), value);
 }
 
-export function readWeeklyBudgetUsd(fallback = DEFAULT_SETTINGS.weeklyAmountUsd): number {
+export function readWeeklyBudgetUsd(
+  fallback = DEFAULT_SETTINGS.weeklyAmountUsd,
+  owner?: string | null,
+): number {
   try {
     if (typeof localStorage === "undefined") return fallback;
-    const raw = localStorage.getItem(LS_WEEKLY_BUDGET);
+    const scopedKey = scopedLsKey(LS_WEEKLY_BUDGET, owner);
+    let raw = localStorage.getItem(scopedKey);
+    if (!raw && owner) {
+      const legacyRaw = localStorage.getItem(LS_WEEKLY_BUDGET);
+      if (legacyRaw) {
+        const legacyN = Number(legacyRaw.trim().replace(",", "."));
+        if (Number.isFinite(legacyN) && legacyN > 0) {
+          localStorage.setItem(scopedKey, String(legacyN));
+          raw = String(legacyN);
+        }
+      }
+    }
     if (!raw) return fallback;
     const n = Number(raw.trim().replace(",", "."));
     return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -105,29 +131,41 @@ export function readWeeklyBudgetUsd(fallback = DEFAULT_SETTINGS.weeklyAmountUsd)
   }
 }
 
-export function writeWeeklyBudgetUsd(amount: number): void {
+export function writeWeeklyBudgetUsd(
+  amount: number,
+  owner?: string | null,
+): void {
   try {
-    if (typeof localStorage !== "undefined" && Number.isFinite(amount) && amount > 0) {
-      localStorage.setItem(LS_WEEKLY_BUDGET, String(amount));
+    if (
+      typeof localStorage !== "undefined" &&
+      Number.isFinite(amount) &&
+      amount > 0
+    ) {
+      localStorage.setItem(
+        scopedLsKey(LS_WEEKLY_BUDGET, owner),
+        String(amount),
+      );
     }
   } catch {
     /* ignore */
   }
 }
 
-export function readAutoBuyMeta(): AutoBuyMeta {
+export function readAutoBuyMeta(owner?: string | null): AutoBuyMeta {
   try {
     if (typeof localStorage === "undefined") return { ...EMPTY_META };
-    const raw = localStorage.getItem(LS_AUTO_WEEKLY_META);
+    const raw = localStorage.getItem(scopedLsKey(LS_AUTO_WEEKLY_META, owner));
     if (!raw) return { ...EMPTY_META };
     const parsed = JSON.parse(raw) as Partial<AutoBuyMeta>;
     return {
       lastAttemptMs:
-        typeof parsed.lastAttemptMs === "number" && Number.isFinite(parsed.lastAttemptMs)
+        typeof parsed.lastAttemptMs === "number" &&
+        Number.isFinite(parsed.lastAttemptMs)
           ? parsed.lastAttemptMs
           : 0,
       lastSuccessMs:
-        typeof parsed.lastSuccessMs === "number" && Number.isFinite(parsed.lastSuccessMs)
+        typeof parsed.lastSuccessMs === "number" &&
+        Number.isFinite(parsed.lastSuccessMs)
           ? parsed.lastSuccessMs
           : 0,
       lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
@@ -148,10 +186,16 @@ export function readAutoBuyMeta(): AutoBuyMeta {
   }
 }
 
-export function writeAutoBuyMeta(meta: AutoBuyMeta): void {
+export function writeAutoBuyMeta(
+  meta: AutoBuyMeta,
+  owner?: string | null,
+): void {
   try {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(LS_AUTO_WEEKLY_META, JSON.stringify(meta));
+      localStorage.setItem(
+        scopedLsKey(LS_AUTO_WEEKLY_META, owner),
+        JSON.stringify(meta),
+      );
     }
   } catch {
     /* ignore */

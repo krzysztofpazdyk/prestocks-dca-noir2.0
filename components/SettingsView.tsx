@@ -111,12 +111,15 @@ export function SettingsView() {
   const prevAutoPhase = useRef(autoBuy.phase);
 
   // Settings weekly amount is SoT for init-on-deposit (Overview reads same LS key).
-  // Hydrate once from LS; do not keep syncing from on-chain (that stomped LS saves).
+  // Hydrate from per-wallet LS; do not keep syncing from on-chain (that stomped LS saves).
   const [weeklyReady, setWeeklyReady] = useState(false);
+  const ownerBase58 = publicKey?.toBase58() ?? null;
   useEffect(() => {
-    setWeekly(readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd));
+    setWeekly(
+      readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58),
+    );
     setWeeklyReady(true);
-  }, []);
+  }, [ownerBase58]);
 
   // Hydrate ranking toggles from keeper GET /prefs (authoritative for buys).
   // prefsReady stays false until hydrate finishes so we never push stale local
@@ -232,10 +235,10 @@ export function SettingsView() {
   useEffect(() => {
     if (!weeklyReady) return;
     const id = window.setTimeout(() => {
-      writeWeeklyBudgetUsd(weekly);
+      writeWeeklyBudgetUsd(weekly, ownerBase58);
     }, 300);
     return () => window.clearTimeout(id);
-  }, [weekly, weeklyReady]);
+  }, [weekly, weeklyReady, ownerBase58]);
 
   useEffect(() => {
     if (!autoConfirmOpen) return;
@@ -265,7 +268,7 @@ export function SettingsView() {
       : Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
 
   async function saveWeeklyBudgetOnChain() {
-    writeWeeklyBudgetUsd(weekly);
+    writeWeeklyBudgetUsd(weekly, ownerBase58);
     predca.clearMessages();
     if (!connected || !predca.mint) return;
     await predca.setWeeklyBudget(weekly);
@@ -446,7 +449,7 @@ export function SettingsView() {
               setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
               predca.clearMessages();
             }}
-            onBlur={() => writeWeeklyBudgetUsd(weekly)}
+            onBlur={() => writeWeeklyBudgetUsd(weekly, ownerBase58)}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
           />
           <p className="text-xs text-[#8b95a8]">

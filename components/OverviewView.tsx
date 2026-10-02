@@ -54,8 +54,11 @@ function top3TitleFromRank(result: RankResult, locale: string): string {
 const BUDGET_EPS = 0.000001;
 
 /** Intended buy amount: Settings LS is SoT; on-chain is synced before Manual Buy. */
-function resolvePurchaseAmount(onChainWeeklyUsd: number | null): number {
-  const ls = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
+function resolvePurchaseAmount(
+  onChainWeeklyUsd: number | null,
+  owner?: string | null,
+): number {
+  const ls = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, owner);
   if (ls > 0) return ls;
   if (onChainWeeklyUsd != null && onChainWeeklyUsd > 0) return onChainWeeklyUsd;
   return DEFAULT_SETTINGS.weeklyAmountUsd;
@@ -78,6 +81,7 @@ function emptyPurchase(): Purchase {
 
 export function OverviewView() {
   const { connected, publicKey } = useWallet();
+  const ownerBase58 = publicKey?.toBase58() ?? null;
   const predca = usePredca();
   const { locale, t } = useI18n();
   const [balances, setBalances] = useState<PortfolioBalances>({ ...MOCK_BALANCES });
@@ -148,8 +152,8 @@ export function OverviewView() {
     setPortfolioRevision((r) => r + 1);
   }, [connected]);
 
-  const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
-  const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd);
+  const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
+  const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
   const budgetDirty = budgetsDiffer(lsWeekly, predca.weeklyBudgetUsd);
   const onChainReady = predca.status === "ready";
   const onChainVaultUsdc =
@@ -219,7 +223,7 @@ export function OverviewView() {
 
     const tokenNames = top3.slice(0, 3).map((r) => r.name);
     // LS is SoT for intended amount (sync on-chain before simulate_buy when dirty).
-    const intendedAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd);
+    const intendedAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
 
     // Prefer on-chain simulate_buy when Predca is ready.
     if (onChainReady) {
@@ -238,7 +242,7 @@ export function OverviewView() {
       }
 
       // simulate_buy spends on-chain weeklyBudgetUsdc — sync LS → chain first.
-      const lsAmount = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd);
+      const lsAmount = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
       if (budgetsDiffer(lsAmount, predca.weeklyBudgetUsd)) {
         setPurchaseMsg(t("msg.updatingBudget"));
         const budgetSig = await predca.setWeeklyBudget(lsAmount);
