@@ -25,7 +25,9 @@ import { rankPrefsForApi, readRankPrefs } from "@/lib/rank-prefs";
 import { DEFAULT_SETTINGS, type JevRank } from "@/lib/mock-data";
 import {
   AUTO_BUY_TICK_MS,
+  BANNER_HOLD_MS,
   WEEK_MS,
+  isBannerHoldActive,
   formatWarsawWhen,
   writeAutoBuyMeta,
   writeAutoWeeklyBuy,
@@ -111,6 +113,11 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const statusEpochRef = useRef(0);
   /** Previous keeper purchase marker. A change means a new on-chain run. */
   const seenKeeperRunRef = useRef<string | null>(null);
+  /**
+   * Epoch ms. While now < this, tick may refresh schedule/mode but must not
+   * replace phase or message (startCycle ok / error / blocked).
+   */
+  const bannerHoldUntilRef = useRef(0);
 
   const resetBannerState = useCallback(() => {
     setPhase("idle");
@@ -125,6 +132,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   useEffect(() => {
     const epoch = ++statusEpochRef.current;
     seenKeeperRunRef.current = null;
+    bannerHoldUntilRef.current = 0;
     // Drop prior wallet banner/status immediately; stay off until fresh status.
     resetBannerState();
     setPrefsReady(false);
@@ -164,6 +172,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     if (!value && Date.now() < ignoreOffUntilRef.current) {
       return;
     }
+    // User changed enable — release the sticky startCycle banner.
+    bannerHoldUntilRef.current = 0;
     const owner = ownerRef.current;
     setEnabledState(value);
     writeAutoWeeklyBuy(value, owner);
@@ -198,12 +208,14 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const startCycle = useCallback(async (weeklyBudgetUsd: number) => {
     const amount = Number(weeklyBudgetUsd);
     if (!Number.isFinite(amount) || amount <= 0) {
+      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
       setPhase("error");
       setMessage("Budżet tygodniowy musi być > 0.");
       return;
     }
     const owner = ownerRef.current;
     if (!owner) {
+      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
       setPhase("blocked");
       setBlockReason("need_wallet");
       setMessage(tRef.current("auto.status.needWallet"));
@@ -216,6 +228,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     try {
       const sign = signMessageRef.current;
       if (!sign) {
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
         setPhase("blocked");
         setBlockReason("need_wallet");
         setMessage("Portfel musi obsługiwać signMessage (włącz auto-buy wymaga podpisu).");
@@ -226,6 +239,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       // No UserConfig yet: do not initialize_user alone. First deposit on
       // Overview creates the account and the vault in one transaction.
       if (!p.config) {
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
         setPhase("blocked");
         setBlockReason("not_ready");
         setMessage(
@@ -238,6 +252,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         return;
       }
       if (p.vaultUsdc == null || !(p.vaultUsdc > 0)) {
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
         setPhase("blocked");
         setBlockReason("vault_low");
         setMessage(tRef.current("auto.status.needVault"));
@@ -246,6 +261,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       const alive = await keeperHealth();
       if (!stillCurrent()) return;
       if (!alive) {
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
         setPhase("error");
         setMessage(tRef.current("auto.status.keeperDown"));
         return;
@@ -259,6 +275,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         const sig = await p.setWeeklyBudget(amount);
         if (!stillCurrent()) return;
         if (!sig) {
+          bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
           setPhase("error");
           setMessage(
             predcaRef.current.lastTxError() ||
@@ -303,6 +320,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       }
       const forceOff = async (reason: string) => {
         if (!stillCurrent()) return;
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
         setEnabledState(false);
         writeAutoWeeklyBuy(false, owner);
         try {
@@ -338,6 +356,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         return;
       }
       // Real purchase succeeded — only now commit enabled (UI + local cache).
+      // Hold the OK banner across the tick that `enabled` immediately retriggers.
+      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
       setEnabledState(true);
       writeAutoWeeklyBuy(true, owner);
       setLastTop3(ran.names.map((name) => ({ name, score: 0 })));
@@ -371,6 +391,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     } catch (e) {
       if (!stillCurrent()) return;
       const reason = e instanceof Error ? e.message : String(e);
+      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
       setEnabledState(false);
       writeAutoWeeklyBuy(false, owner);
       try {
@@ -411,6 +432,16 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     }
     if (st.mode === "live" || st.mode === "dry-run") {
       setKeeperMode(st.mode);
+    }
+    // startCycle just showed ok / error / blocked. Keeper status often still
+    // says off and would replace that banner with "wyłączone".
+    if (isBannerHoldActive(bannerHoldUntilRef.current, Date.now())) {
+      const heldNext = keeperNextBuyAtMs(st);
+      if (heldNext != null) {
+        setNextAt(heldNext);
+        setDue(false);
+      }
+      return;
     }
     const configuredOwner =
       (typeof st.owner === "string" && st.owner.trim()) || null;
