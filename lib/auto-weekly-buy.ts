@@ -23,6 +23,21 @@ export function isBannerHoldActive(holdUntilMs: number, nowMs: number): boolean 
   return Number.isFinite(holdUntilMs) && holdUntilMs > 0 && nowMs < holdUntilMs;
 }
 
+/**
+ * Wallet to turn off after a failed startCycle.
+ * Null once the wallet epoch moved — the live owner ref may already be the
+ * next pubkey, and a disable must not follow it.
+ */
+export function cleanupOwnerForFailedCycle(
+  cycleOwner: string | null,
+  epochAtStart: number,
+  epochNow: number,
+): string | null {
+  if (!cycleOwner) return null;
+  if (epochNow !== epochAtStart) return null;
+  return cycleOwner;
+}
+
 export const LS_AUTO_WEEKLY_BUY = "prestocks.autoWeeklyBuy";
 export const LS_AUTO_WEEKLY_META = "prestocks.autoWeeklyBuy.meta";
 export const LS_WEEKLY_BUDGET = "predca_weekly_budget_usd";
