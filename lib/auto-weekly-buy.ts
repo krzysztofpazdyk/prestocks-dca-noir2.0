@@ -11,6 +11,17 @@ import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 export const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const AUTO_BUY_RETRY_MS = 15 * 60 * 1000;
 export const AUTO_BUY_TICK_MS = 60 * 1000;
+/**
+ * After startCycle sets ok / error / blocked, tick must not replace that
+ * banner until this elapses. The enable effect calls tick immediately, while
+ * keeper status can still say off. Wallet change clears the hold separately.
+ */
+export const BANNER_HOLD_MS = 10 * 1000;
+
+/** True while a startCycle banner should survive keeper-status ticks. */
+export function isBannerHoldActive(holdUntilMs: number, nowMs: number): boolean {
+  return Number.isFinite(holdUntilMs) && holdUntilMs > 0 && nowMs < holdUntilMs;
+}
 
 export const LS_AUTO_WEEKLY_BUY = "prestocks.autoWeeklyBuy";
 export const LS_AUTO_WEEKLY_META = "prestocks.autoWeeklyBuy.meta";
