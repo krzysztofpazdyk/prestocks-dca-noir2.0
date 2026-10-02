@@ -116,7 +116,7 @@ const pl: Dict = {
   "msg.tooFewProducts": "Za mało produktów PreStocks do rankingu (<3).",
   "purchase.disabled.tx": "Transakcja w toku…",
   "purchase.disabled.noRecs": "Zakup nieaktywny — najpierw kliknij Wygeneruj rekomendacje (top-3).",
-  "purchase.disabled.notReady": "Zakup nieaktywny — Initialize Predca, potem Deposit USDC do vaulta.",
+  "purchase.disabled.notReady": "Zakup nieaktywny — najpierw wpłać USDC na Overview (konto powstaje z wpłatą).",
   "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Zrób Deposit z portfela (faucet zasila portfel, nie vault).",
   "purchase.disabled.generic": "Zakup nieaktywny — sprawdź vault, ranking i status Predca.",
   "msg.noRecs": "Brak rekomendacji do zakupu.",
@@ -130,13 +130,13 @@ const pl: Dict = {
   "msg.budgetSyncFail":
     "Nie udało się zaktualizować budżetu on-chain przed zakupem.",
   "msg.predcaNotReady":
-    "Predca nie jest ready — Initialize + Deposit, potem zakup on-chain.",
+    "Predca nie jest gotowe — wpłać USDC na Overview (konto powstaje z wpłatą), potem zakup on-chain.",
   "msg.vaultLowMock":
     "Za mało USDC w vault (mock): {have} < {need}.",
   "msg.purchaseOffline":
     "Zakup zapisany (offline mock): ${amount} z vault → ⅓ na {tokens}",
   "msg.connectForPurchase":
-    "Podłącz portfel i Initialize + Deposit, by kupować on-chain.",
+    "Podłącz portfel i wpłać USDC na Overview, by kupować on-chain.",
   "msg.purchaseError": "Nie udało się wykonać zakupu.",
   "msg.autoNoRecs": "Auto-zakup: ranking nie zwrócił top-3.",
 
@@ -160,7 +160,11 @@ const pl: Dict = {
   "auto.status.needWallet":
     "Podłącz portfel, żeby włączyć keepersa (wystarczy pubkey — zakup zrobi bot).",
   "auto.status.notReady":
-    "Auto-zakup czeka na Initialize + Deposit, potem cotygodniowy zakup keepersa z vaulta.",
+    "Najpierw wpłać USDC na Overview — konto Predca powstaje razem z pierwszą wpłatą.",
+  "auto.status.stillLoading":
+    "Predca jeszcze się ładuje — spróbuj włączyć auto-zakup za chwilę.",
+  "auto.status.needVault":
+    "Najpierw wpłać USDC do vaulta na Overview. Auto-zakup startuje, gdy vault ma środki.",
   "auto.status.error": "Auto-zakup nieudany: {reason}",
   "auto.status.backoff":
     "Auto-zakup: ponowna próba za chwilę (ostatnia nieudana).",
@@ -171,10 +175,12 @@ const pl: Dict = {
   "settings.kicker": "Konfiguracja DCA",
   "settings.title": "Ustawienia",
   "settings.intro":
-    "Tygodniowa kwota zapisuje się lokalnie od razu; on-chain przez „Zapisz budżet on-chain”, Manual Buy (auto-sync) lub włączenie cotygodniowych zakupów. BYOK pozostaje w localStorage.",
+    "Tygodniowa kwota zapisuje się lokalnie od razu. Konto on-chain powstaje przy pierwszej wpłacie na Overview. Potem budżet zmienia „Zapisz budżet on-chain”, Manual Buy albo włączenie auto-zakupu. BYOK zostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
   "settings.weeklyAtEnable":
-    "Zapis lokalny od razu (init/deposit). On-chain: przycisk poniżej, Manual Buy albo włączenie auto-zakupu.",
+    "Zapis lokalny od razu. Bez konta Predca kwota on-chain powstaje przy wpłacie na Overview.",
+  "settings.budgetNeedsDeposit":
+    "Budżet lokalny jest zapisany. Kwota on-chain pojawi się po wpłacie USDC na Overview.",
   "settings.autoWeekly": "Automatyczny cotygodniowy zakup z vaulta",
   "settings.autoWeeklyHint":
     "Domyślnie wyłączone. Włączenie bierze kwotę z pola powyżej i od razu kupuje 3 PreStock. Ta transakcja uruchamia cotygodniowy harmonogram. Późniejszych zakupów nie musisz już potwierdzać.",
@@ -192,12 +198,10 @@ const pl: Dict = {
   "settings.saveLocal": "Zapisz lokalnie",
   "settings.savedLocal": "Zapisano lokalnie (brak portfela)",
   "settings.noMint": "Brak NEXT_PUBLIC_USDC_MINT",
-  "settings.initBudget": "Initialize + ustaw budżet on-chain",
-  "settings.initPending": "Inicjalizacja…",
   "settings.saveOnChain": "Zapisz budżet on-chain",
   "settings.savingOnChain": "Zapis on-chain…",
   "settings.connectForBudget":
-    "Podłącz portfel, aby zapisać budżet w Predca (set_weekly_budget / initialize_user).",
+    "Podłącz portfel. Budżet lokalny zapisuje się od razu; on-chain dopiero po wpłacie na Overview.",
   "settings.saved": "· zapisano ✓",
   "settings.cleared": "· wyczyszczono ✓",
   "settings.exclusions": "Wykluczenia (np. xAI, OpenAI) — stosowane w rankingu",
@@ -232,7 +236,7 @@ const pl: Dict = {
   "history.noRuns":
     "Brak RunRecord on-chain — wykonaj pierwszy zakup (simulate_buy) lub poczekaj na record_run.",
   "history.notReady":
-    "Predca nie jest gotowe — Initialize (+ Deposit), potem pojawią się przebiegi.",
+    "Predca nie jest gotowe — wpłać USDC na Overview, potem pojawią się przebiegi.",
   "history.loading": "Ładowanie historii on-chain…",
   "history.runMeta": "Run #{index} · budżet ~${budget} · slot {slot}",
 };
@@ -336,7 +340,7 @@ const en: Dict = {
   "msg.tooFewProducts": "Too few PreStocks products for ranking (<3).",
   "purchase.disabled.tx": "Transaction in progress…",
   "purchase.disabled.noRecs": "Purchase disabled — click Generate recommendations first (top-3).",
-  "purchase.disabled.notReady": "Purchase disabled — Initialize Predca, then Deposit USDC into the vault.",
+  "purchase.disabled.notReady": "Purchase disabled — deposit USDC on Overview first (the account is created with that deposit).",
   "purchase.disabled.vaultLow": "Purchase disabled — vault has {have} USDC, need ≥ {need}. Deposit from wallet (faucet fills wallet, not vault).",
   "purchase.disabled.generic": "Purchase disabled — check vault, ranking, and Predca status.",
   "msg.noRecs": "No recommendations to purchase.",
@@ -350,13 +354,13 @@ const en: Dict = {
   "msg.budgetSyncFail":
     "Could not update on-chain budget before purchase.",
   "msg.predcaNotReady":
-    "Predca is not ready — Initialize + Deposit, then purchase on-chain.",
+    "Predca is not ready — deposit USDC on Overview (the account is created with that deposit), then buy on-chain.",
   "msg.vaultLowMock":
     "Not enough USDC in vault (mock): {have} < {need}.",
   "msg.purchaseOffline":
     "Purchase saved (offline mock): ${amount} from vault → ⅓ to {tokens}",
   "msg.connectForPurchase":
-    "Connect wallet and Initialize + Deposit to purchase on-chain.",
+    "Connect a wallet and deposit USDC on Overview to buy on-chain.",
   "msg.purchaseError": "Purchase could not be completed.",
   "msg.autoNoRecs": "Auto-buy: ranking did not return a top-3.",
 
@@ -380,7 +384,11 @@ const en: Dict = {
   "auto.status.needWallet":
     "Connect a wallet to start the keeper (pubkey only — the bot performs the buy).",
   "auto.status.notReady":
-    "Auto-buy is waiting for Initialize + Deposit, then weekly keeper purchase from the vault.",
+    "Deposit USDC on Overview first — the Predca account is created with the first deposit.",
+  "auto.status.stillLoading":
+    "Predca is still loading — try enabling auto-buy again in a moment.",
+  "auto.status.needVault":
+    "Deposit USDC into the vault on Overview first. Auto-buy starts once the vault holds funds.",
   "auto.status.error": "Auto-buy failed: {reason}",
   "auto.status.backoff":
     "Auto-buy: retrying shortly (last attempt failed).",
@@ -391,10 +399,12 @@ const en: Dict = {
   "settings.kicker": "DCA configuration",
   "settings.title": "Settings",
   "settings.intro":
-    "Weekly amount saves locally right away; on-chain via “Save budget on-chain”, Manual Buy (auto-sync), or enabling weekly purchases. BYOK stays in localStorage.",
+    "The weekly amount saves locally right away. The on-chain account is created with the first deposit on Overview. After that, change the budget with “Save budget on-chain”, Manual Buy, or by enabling auto-buy. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
   "settings.weeklyAtEnable":
-    "Saved locally right away (init/deposit). On-chain: button below, Manual Buy, or enable auto-buy.",
+    "Saved locally right away. Until a Predca account exists, the on-chain amount is set by the deposit on Overview.",
+  "settings.budgetNeedsDeposit":
+    "The local budget is saved. The on-chain amount appears after you deposit USDC on Overview.",
   "settings.autoWeekly": "Automatic weekly purchase from the vault",
   "settings.autoWeeklyHint":
     "Off by default. Enabling takes the amount above and immediately buys 3 PreStocks. That transaction starts the weekly schedule. You will not need to confirm later purchases.",
@@ -412,12 +422,10 @@ const en: Dict = {
   "settings.saveLocal": "Save locally",
   "settings.savedLocal": "Saved locally (no wallet)",
   "settings.noMint": "Missing NEXT_PUBLIC_USDC_MINT",
-  "settings.initBudget": "Initialize + set budget on-chain",
-  "settings.initPending": "Initializing…",
   "settings.saveOnChain": "Save budget on-chain",
   "settings.savingOnChain": "Saving on-chain…",
   "settings.connectForBudget":
-    "Connect wallet to save budget in Predca (set_weekly_budget / initialize_user).",
+    "Connect a wallet. The local budget saves immediately; the on-chain amount follows a deposit on Overview.",
   "settings.saved": "· saved ✓",
   "settings.cleared": "· cleared ✓",
   "settings.exclusions": "Exclusions (e.g. xAI, OpenAI) — applied to ranking",
@@ -452,7 +460,7 @@ const en: Dict = {
   "history.noRuns":
     "No on-chain RunRecord yet — make a purchase (simulate_buy) or wait for record_run.",
   "history.notReady":
-    "Predca is not ready — Initialize (+ Deposit), then runs will appear.",
+    "Predca is not ready — deposit USDC on Overview, then runs will appear.",
   "history.loading": "Loading on-chain history…",
   "history.runMeta": "Run #{index} · budget ~${budget} · slot {slot}",
 };

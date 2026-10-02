@@ -298,30 +298,6 @@ function usePredcaImpl() {
     }
   }
 
-  async function initializeUser(weeklyBudgetUsd: number) {
-    if (!program || !owner || !mint) {
-      reportError(
-        !mint
-          ? `Ustaw NEXT_PUBLIC_USDC_MINT (mock mint na Devnet, np. ${MOCK_USDC_MINT}).`
-          : "Podłącz portfel.",
-      );
-      return null;
-    }
-    const raw = dollarsToRaw(weeklyBudgetUsd);
-    if (raw.lte(new BN(0))) {
-      reportError("Budżet tygodniowy musi być > 0.");
-      return null;
-    }
-    return withTx(
-      () =>
-        program.methods
-          .initializeUser(raw)
-          .accounts({ usdcMint: mint })
-          .rpc(),
-      "Konto Predca zainicjalizowane.",
-    );
-  }
-
   /**
    * Deposit USDC into vault.
    * If UserConfig is missing: initialize_user + deposit_usdc in one transaction
@@ -430,8 +406,13 @@ function usePredcaImpl() {
       reportError("Podłącz portfel.");
       return null;
     }
+    // Lone initialize_user is not a Settings/auto-buy path. The account is
+    // created only by the first deposit (initialize_user + deposit_usdc).
     if (!config) {
-      return initializeUser(weeklyBudgetUsd);
+      reportError(
+        "Najpierw wpłać USDC na Overview — konto Predca powstaje razem z pierwszą wpłatą.",
+      );
+      return null;
     }
     const raw = dollarsToRaw(weeklyBudgetUsd);
     if (raw.lte(new BN(0))) {
@@ -594,7 +575,6 @@ function usePredcaImpl() {
     lastRun,
     lastPurchaseOnChain,
     refresh,
-    initializeUser,
     depositUsdc,
     withdrawUsdc,
     setWeeklyBudget,

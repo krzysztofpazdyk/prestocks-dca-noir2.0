@@ -221,6 +221,28 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         setMessage("Portfel musi obsługiwać signMessage (włącz auto-buy wymaga podpisu).");
         return;
       }
+      writeWeeklyBudgetUsd(amount, owner);
+      const p = predcaRef.current;
+      // No UserConfig yet: do not initialize_user alone. First deposit on
+      // Overview creates the account and the vault in one transaction.
+      if (!p.config) {
+        setPhase("blocked");
+        setBlockReason("not_ready");
+        setMessage(
+          p.status === "loading"
+            ? tRef.current("auto.status.stillLoading")
+            : p.status === "error" && p.error
+              ? p.error
+              : tRef.current("auto.status.notReady"),
+        );
+        return;
+      }
+      if (p.vaultUsdc == null || !(p.vaultUsdc > 0)) {
+        setPhase("blocked");
+        setBlockReason("vault_low");
+        setMessage(tRef.current("auto.status.needVault"));
+        return;
+      }
       const alive = await keeperHealth();
       if (!stillCurrent()) return;
       if (!alive) {
@@ -228,8 +250,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         setMessage(tRef.current("auto.status.keeperDown"));
         return;
       }
-      writeWeeklyBudgetUsd(amount, owner);
-      const p = predcaRef.current;
       if (
         connectedRef.current &&
         p.mint &&
@@ -241,7 +261,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         if (!sig) {
           setPhase("error");
           setMessage(
-            p.error || "Nie udało się zapisać kwoty tygodniowej.",
+            predcaRef.current.lastTxError() ||
+              "Nie udało się zapisać kwoty tygodniowej.",
           );
           return;
         }
