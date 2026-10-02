@@ -230,10 +230,10 @@ export function SettingsView() {
     buyDespiteIpo,
   ]);
 
-  // Persist weekly to localStorage as the user edits (not gated on ranking prefsReady).
+  // Persist weekly to this wallet's key. Disconnected edits stay in React state.
   // On-chain budget still updates only when enabling weekly auto-buy (startCycle).
   useEffect(() => {
-    if (!weeklyReady) return;
+    if (!weeklyReady || !ownerBase58) return;
     const id = window.setTimeout(() => {
       writeWeeklyBudgetUsd(weekly, ownerBase58);
     }, 300);
@@ -449,7 +449,9 @@ export function SettingsView() {
               setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
               predca.clearMessages();
             }}
-            onBlur={() => writeWeeklyBudgetUsd(weekly, ownerBase58)}
+            onBlur={() => {
+              if (ownerBase58) writeWeeklyBudgetUsd(weekly, ownerBase58);
+            }}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
           />
           <p className="text-xs text-[#8b95a8]">
