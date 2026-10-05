@@ -13,6 +13,8 @@ import {
 } from "react";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import { useConnection, useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
+import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
+import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
 import { Transaction } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
@@ -123,10 +125,26 @@ function runToLastPurchase(run: RunRecordData): OnChainLastPurchase {
   };
 }
 
+function privySendNotReady(): Promise<string> {
+  return Promise.reject(
+    new Error(
+      "Portfel Privy jest wybrany, ale podpis jeszcze nie jest gotowy. Spróbuj ponownie.",
+    ),
+  );
+}
+
 function usePredcaImpl() {
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
-  const { sendTransaction } = useWallet();
+  const adapterWallet = useAnchorWallet();
+  const { sendTransaction: adapterSend, wallet: selectedWallet } = useWallet();
+  const privyTx = usePrivyTxOverride();
+  const isPrivy = selectedWallet?.adapter.name === PRIVY_WALLET_NAME;
+  // Privy's Wallet Standard signTransaction defaults to mainnet when chain is
+  // omitted. The bridge passes solana:devnet. Do not fall through to the adapter.
+  const wallet = isPrivy ? (privyTx?.anchorWallet ?? null) : adapterWallet;
+  const sendTransaction = isPrivy
+    ? (privyTx?.sendTransaction ?? privySendNotReady)
+    : adapterSend;
   const mint = useMemo(() => usdcMintOrNull(), []);
 
   const [config, setConfig] = useState<UserConfigData | null>(null);

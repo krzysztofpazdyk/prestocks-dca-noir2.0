@@ -1,4 +1,4 @@
-> **Pages mirror v4.08:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Future UI ships need redeploying both repos (or automate later).
+> **Pages mirror v4.09:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
 
 # PreStocks UI — Noir
 
@@ -108,7 +108,17 @@ Static export deploys to:
 - Production env (`.env.production`) points at **Solana DEVNET** only — public `NEXT_PUBLIC_*` values, no private keys.
 - CI: `.github/workflows/pages.yml` builds on push to `main` and uploads `out/` to GitHub Pages.
 
-### Phantom / wallet
+### Phantom / Solflare / Privy
 
-W Phantom (lub innym walletcie) ustaw sieć na **Devnet** przed łączeniem. UI jest zahardcodowane na `https://api.devnet.solana.com` w buildzie Pages — Mainnet nie zadziała z tym deployem.
+W Phantom lub Solflare ustaw sieć na **Devnet** przed łączeniem. UI Pages jest na `https://api.devnet.solana.com` — Mainnet nie zadziała z tym deployem.
+
+**Privy** jest opcjonalnym trzecim portfelem (e-mail lub Google + wbudowany portfel Solana). To **osobny adres** niż Phantom i Solflare, więc vault Predca jest pusty, dopóki nie użyjesz faucetu Devnet i wpłaty (init + deposit). Przełączenie portfela przełącza właściciela on-chain, vault i keepera.
+
+Publiczny identyfikator (bez App Secret):
+
+```
+NEXT_PUBLIC_PRIVY_APP_ID=
+```
+
+W dashboardzie Privy: **Solana Devnet**, embedded wallets włączone, login email + Google, allowed origins `https://krzysztofpazdyk.github.io` i `http://localhost:3000`. Puste `NEXT_PUBLIC_PRIVY_APP_ID` w `.env.production` jest OK, dopóki App ID nie zostanie wpisane przed buildem Pages. App Secret nie trafia do repo.
 

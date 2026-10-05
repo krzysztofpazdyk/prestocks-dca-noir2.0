@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import {
   keeperDisable,
   keeperEnable,
@@ -78,7 +79,8 @@ function keeperRunMarker(st: KeeperRunResult): string | null {
 let cycleInFlight = false;
 
 function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
-  const { connected, publicKey, signMessage } = useWallet();
+  const { connected, publicKey } = useWallet();
+  const signMessage = useKeeperSignMessage();
   const predca = usePredca();
   const { locale, t } = useI18n();
   const [enabled, setEnabledState] = useState(DEFAULT_SETTINGS.autoWeeklyBuy);
