@@ -8,7 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import type { AnchorWallet } from "@solana/wallet-adapter-react";
 import type { SendTransactionOptions } from "@solana/wallet-adapter-base";
 import {
@@ -36,6 +36,7 @@ import {
   getPrivyWalletDelegate,
   setPrivyWalletDelegate,
 } from "@/lib/privy-wallet-delegate";
+import { hasForeignSignature } from "@/lib/privy-blockhash";
 
 /** One registration per address. Wallet Standard ignores a second copy of the same object. */
 const registeredKeys = new Set<string>();
@@ -60,7 +61,39 @@ const PrivyTxContext = createContext<PrivyTxOverride | null>(null);
  * When the selected wallet is Privy, Anchor and keeper signing use this
  * bridge and pass solana:devnet explicitly.
  */
+async function refreshLegacyBlockhash(
+  transaction: Transaction,
+  connection: Connection,
+): Promise<void> {
+  const latest = await connection.getLatestBlockhash("confirmed");
+  transaction.recentBlockhash = latest.blockhash;
+  transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+}
+
+function canRefreshLegacyBlockhash(
+  transaction: Transaction,
+  feePayer: PublicKey,
+): boolean {
+  return !hasForeignSignature(
+    transaction.signatures.map((entry) => ({
+      pubkey: entry.publicKey.toBase58(),
+      signed: entry.signature != null,
+    })),
+    feePayer.toBase58(),
+  );
+}
+
+/** Drop a stale fee-payer signature so the refreshed message is what Privy signs. */
+function clearFeePayerSignature(transaction: Transaction, feePayer: PublicKey) {
+  for (const entry of transaction.signatures) {
+    if (entry.publicKey.equals(feePayer)) entry.signature = null;
+  }
+}
+
 export function PrivyWalletBridge({ children }: { children: ReactNode }) {
+  const { connection } = useConnection();
+  const connectionRef = useRef(connection);
+  connectionRef.current = connection;
   const { wallets: standardWallets } = useStandardWallets();
   const { wallets } = useWallets();
   const { signMessage: privySignMessage } = useSignMessage();
@@ -169,6 +202,16 @@ export function PrivyWalletBridge({ children }: { children: ReactNode }) {
       publicKey,
       async signTransaction(transaction) {
         const delegate = await requireDelegate();
+        // Anchor `.rpc()` and ensureOwnerAtas set the blockhash before the
+        // user sees Privy. Refresh it here, immediately before the prompt,
+        // unless another signer already signed (a new hash would break them).
+        if (
+          transaction instanceof Transaction &&
+          canRefreshLegacyBlockhash(transaction, publicKey)
+        ) {
+          clearFeePayerSignature(transaction, publicKey);
+          await refreshLegacyBlockhash(transaction, connectionRef.current);
+        }
         const signed = await delegate.signTransactionBytes(
           serializeTransactionForPrivy(transaction),
         );
@@ -193,10 +236,9 @@ export function PrivyWalletBridge({ children }: { children: ReactNode }) {
         if (signers?.length) transaction.sign(signers);
       } else {
         if (!transaction.feePayer) transaction.feePayer = publicKey;
-        if (!transaction.recentBlockhash) {
-          const latest = await connection.getLatestBlockhash("confirmed");
-          transaction.recentBlockhash = latest.blockhash;
-          transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+        if (canRefreshLegacyBlockhash(transaction, publicKey)) {
+          clearFeePayerSignature(transaction, publicKey);
+          await refreshLegacyBlockhash(transaction, connection);
         }
         if (signers?.length) transaction.partialSign(...signers);
       }

@@ -15,6 +15,7 @@ import { AnchorProvider } from "@coral-xyz/anchor";
 import { useConnection, useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
 import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
 import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
+import { isStaleBlockhashError } from "@/lib/privy-blockhash";
 import { Transaction } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
@@ -545,9 +546,20 @@ function usePredcaImpl() {
         .rpc();
     };
 
+    const submitOnce = async (runIndex: number) => {
+      try {
+        return await submitAt(runIndex);
+      } catch (e) {
+        // Slow Privy approval can expire the blockhash. One rebuild + re-prompt.
+        // Phantom and Solflare keep the single attempt.
+        if (!isPrivy || !isStaleBlockhashError(e)) throw e;
+        return await submitAt(runIndex);
+      }
+    };
+
     return withTx(async () => {
       try {
-        return await submitAt(nextIndex);
+        return await submitOnce(nextIndex);
       } catch (e) {
         if (!isRunAlreadyExists(e)) throw e;
         const retryIndex = await findNextRunIndex(program, owner);
@@ -555,7 +567,7 @@ function usePredcaImpl() {
           throw new Error(RUN_INDEX_TAKEN_MSG);
         }
         try {
-          return await submitAt(retryIndex);
+          return await submitOnce(retryIndex);
         } catch (e2) {
           if (isRunAlreadyExists(e2)) throw new Error(RUN_INDEX_TAKEN_MSG);
           throw e2;

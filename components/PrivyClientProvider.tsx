@@ -31,6 +31,18 @@ export function PrivyClientProvider({ children }: { children: ReactNode }) {
           },
         },
       },
+      // Dashboard has Solana wallet login on. An empty connector list silences
+      // Privy's missing-connectors warning without registering Phantom or
+      // Solflare again (those stay on wallet-adapter, autoConnect stays false).
+      externalWallets: {
+        solana: {
+          connectors: {
+            onMount() {},
+            onUnmount() {},
+            get: () => [],
+          },
+        },
+      },
     };
   }, []);
 

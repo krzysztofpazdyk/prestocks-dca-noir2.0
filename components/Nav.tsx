@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { clusterLabel } from "@/lib/predca";
 import { useI18n, type Locale } from "@/lib/i18n";
-import { PrivyLoginButton } from "@/components/PrivyLoginButton";
+import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 
 export function Nav() {
   const pathname = usePathname();
@@ -95,9 +94,8 @@ export function Nav() {
             <LocaleBtn code="pl" />
             <LocaleBtn code="en" />
           </div>
-          <PrivyLoginButton />
           {walletReady ? (
-            <WalletMultiButton />
+            <ConnectWalletButton />
           ) : (
             <div
               className="wallet-adapter-button wallet-adapter-button-trigger"

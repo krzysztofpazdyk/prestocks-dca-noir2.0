@@ -1,4 +1,4 @@
-> **Pages mirror v4.09:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
+> **Pages mirror v4.10:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
 
 # PreStocks UI — Noir
 
@@ -112,7 +112,9 @@ Static export deploys to:
 
 W Phantom lub Solflare ustaw sieć na **Devnet** przed łączeniem. UI Pages jest na `https://api.devnet.solana.com` — Mainnet nie zadziała z tym deployem.
 
-**Privy** jest opcjonalnym trzecim portfelem (e-mail lub Google + wbudowany portfel Solana). To **osobny adres** niż Phantom i Solflare, więc vault Predca jest pusty, dopóki nie użyjesz faucetu Devnet i wpłaty (init + deposit). Przełączenie portfela przełącza właściciela on-chain, vault i keepera.
+Jeden przycisk **Select Wallet** otwiera listę: Phantom, Solflare i — gdy ustawione jest `NEXT_PUBLIC_PRIVY_APP_ID` — Privy. Puste App ID zostawia tylko Phantom i Solflare.
+
+**Privy** jest opcjonalnym trzecim portfelem (e-mail lub Google + wbudowany portfel Solana). To **osobny adres** niż Phantom i Solflare, więc vault Predca jest pusty, dopóki nie użyjesz faucetu Devnet i wpłaty (init + deposit). Przełączenie portfela przełącza właściciela on-chain, vault i keepera. Auto-buy (keeper) układa własny ranking; ręczny zakup na Overview używa listy metryk z UI — to celowo różne ścieżki.
 
 Publiczny identyfikator (bez App Secret):
 
