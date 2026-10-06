@@ -302,29 +302,66 @@ export type KeeperTransport = {
   timedOut: boolean;
 };
 
+const ENABLE_PROXY_PENDING_STATUS = new Set([408, 502, 504, 524]);
+const ENABLE_PROXY_TIMEOUT_RE = /timeout|unreachable/i;
+const ENABLE_UNKNOWN_ERROR_RE =
+  /not confirmed|TransactionExpiredTimeout|unknown if it succeeded/i;
+
+function transportSaysUnknownEnable(data: KeeperRunResult): boolean {
+  if (data.pending === true) return true;
+  if (typeof data.signature === "string" && data.signature.length > 0) return true;
+  if (data.reason === "confirming" || data.reason === "recent_run") return true;
+  return ENABLE_UNKNOWN_ERROR_RE.test(data.error ?? "");
+}
+
 /**
  * No HTTP body and a timeout or status 0 means the daemon may still be
- * inside /enable. Do not treat that as a finished failure.
+ * inside /enable. A confirm timeout, recent run, or proxy 502/504/524 is the
+ * same: pending, not a failed buy. 401/403 stay hard errors.
  */
 export function enableResultFromTransport(r: KeeperTransport): KeeperRunResult {
-  if (!r.data) {
+  if (r.status === 401 || r.status === 403) {
+    return {
+      ok: false,
+      error: r.data?.error || r.data?.detail || "signature_rejected",
+    };
+  }
+  if (ENABLE_PROXY_PENDING_STATUS.has(r.status)) {
+    return { ok: false, pending: true, error: "enable_timeout" };
+  }
+  const data = r.data;
+  if (data && data.ok !== true) {
+    const blob = `${data.error ?? ""} ${data.detail ?? ""}`;
+    if (ENABLE_PROXY_TIMEOUT_RE.test(blob)) {
+      return {
+        ...data,
+        ok: false,
+        pending: true,
+        error: data.error || data.detail || "enable_timeout",
+      };
+    }
+    if (data.ok === false && transportSaysUnknownEnable(data)) {
+      return {
+        ...data,
+        ok: false,
+        pending: true,
+        error: data.error || "enable_timeout",
+      };
+    }
+  }
+  if (!data) {
     if (r.timedOut || r.status === 0) {
       return { ok: false, pending: true, error: "enable_timeout" };
     }
     return { ok: false, error: `http_${r.status}` };
   }
-  if (!r.ok || r.status === 401 || r.status === 403) {
+  if (!r.ok) {
     return {
       ok: false,
-      error:
-        r.data.error ||
-        r.data.detail ||
-        (r.status === 401 || r.status === 403
-          ? "signature_rejected"
-          : `http_${r.status}`),
+      error: data.error || data.detail || `http_${r.status}`,
     };
   }
-  return r.data;
+  return data;
 }
 
 async function keeperFetch(
@@ -445,6 +482,11 @@ export async function keeperEnable(
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `sign_rejected: ${msg}` };
   }
+  // Client timeout stays 120s. The keeper proxy upstream timeout is also 120s
+  // today, so they race: a 408/502/504/524 or "timeout|unreachable" body is
+  // pending and the UI polls status instead of treating it as Off.
+  // predca-api-render needs a twin PR to raise _mutating("enable") above
+  // rank + buy + the 90s confirm poll (for example _upstream(..., timeout=240)).
   const r = await keeperFetch(
     "/enable",
     {

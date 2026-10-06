@@ -7,6 +7,7 @@ import {
   canCommitEnabledFromStatus,
   pendingEnableStillFor,
   resolvePendingEnable,
+  shouldPollInProgressEnable,
   shouldSendEnable,
 } from "../lib/auto-weekly-buy";
 import {
@@ -68,6 +69,74 @@ test("enable transport timeout and status 0 stay pending", () => {
     }).error,
     "signature_rejected",
   );
+  assert.equal(
+    enableResultFromTransport({
+      ok: false,
+      status: 403,
+      data: null,
+      timedOut: false,
+    }).pending,
+    undefined,
+  );
+});
+
+test("proxy timeout and confirm timeout stay pending, not Off", () => {
+  for (const status of [408, 502, 504, 524]) {
+    const row = enableResultFromTransport({
+      ok: false,
+      status,
+      data: status === 524 ? null : { ok: false, detail: "Keeper daemon timeout" },
+      timedOut: false,
+    });
+    assert.equal(row.pending, true, String(status));
+    assert.equal(row.error, "enable_timeout");
+  }
+  const unreachable = enableResultFromTransport({
+    ok: false,
+    status: 500,
+    data: { ok: false, error: "Keeper daemon unreachable" },
+    timedOut: false,
+  });
+  assert.equal(unreachable.pending, true);
+  const confirming = enableResultFromTransport({
+    ok: true,
+    status: 200,
+    data: {
+      ok: false,
+      reason: "confirming",
+      signature: "sig-confirm",
+      phase: "confirming",
+    },
+    timedOut: false,
+  });
+  assert.equal(confirming.pending, true);
+  assert.equal(confirming.signature, "sig-confirm");
+  const recent = enableResultFromTransport({
+    ok: true,
+    status: 200,
+    data: { ok: false, reason: "recent_run" },
+    timedOut: false,
+  });
+  assert.equal(recent.pending, true);
+  const notConfirmed = enableResultFromTransport({
+    ok: true,
+    status: 200,
+    data: {
+      ok: false,
+      error: "Transaction was not confirmed in 30.00 seconds. It is unknown if it succeeded or failed.",
+    },
+    timedOut: false,
+  });
+  assert.equal(notConfirmed.pending, true);
+  assert.match(notConfirmed.error ?? "", /not confirmed/);
+  const plain = enableResultFromTransport({
+    ok: false,
+    status: 500,
+    data: { ok: false, error: "vault_low" },
+    timedOut: false,
+  });
+  assert.equal(plain.pending, undefined);
+  assert.equal(plain.error, "vault_low");
 });
 
 test("poll waits, then commits On or Off without a second enable", () => {
@@ -142,6 +211,47 @@ test("a stale error is not a new failure; a finished On skips /enable", () => {
   assert.equal(canCommitEnabledFromStatus(bought, OTHER), false);
   assert.equal(
     canCommitEnabledFromStatus({ ...bought, enabled: false }, OWNER),
+    false,
+  );
+  assert.equal(
+    resolvePendingEnable(
+      {
+        ok: false,
+        enabled: false,
+        owner: OWNER,
+        phase: "confirming",
+        error: "Transaction was not confirmed in 30.00 seconds",
+        signature: "sig-confirm",
+      },
+      OWNER,
+      1_000,
+      { error: null, phase: "enabling" },
+    ),
+    "pending",
+  );
+  assert.equal(
+    shouldPollInProgressEnable(
+      { enabled: true, owner: OWNER, phase: "buying" },
+      OWNER,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldPollInProgressEnable(
+      { enabled: true, owner: OWNER, phase: "confirming" },
+      OWNER,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldPollInProgressEnable(
+      { enabled: false, owner: OWNER, phase: "buying" },
+      OWNER,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldPollInProgressEnable({ enabled: true, owner: OWNER, phase: "ok" }, OWNER),
     false,
   );
 });

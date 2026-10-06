@@ -83,11 +83,39 @@ export function canCommitEnabledFromStatus(
   return shouldCommitAutoBuyEnabled(st);
 }
 
+const IN_PROGRESS_ENABLE_PHASES = new Set([
+  "buying",
+  "checking",
+  "ranking",
+  "enabling",
+  "confirming",
+]);
+
+/**
+ * Keeper is already On and still inside this week's buy. Do not POST /enable.
+ * Poll status until the purchase commits or the daemon reports a new failure.
+ */
+export function shouldPollInProgressEnable(
+  st: EnableStatusSnapshot,
+  owner: string,
+): boolean {
+  if (st.enabled !== true || !ownerMatches(st, owner)) return false;
+  return typeof st.phase === "string" && IN_PROGRESS_ENABLE_PHASES.has(st.phase);
+}
+
 function isNewDaemonFailure(
   st: EnableStatusSnapshot,
   baseline: EnableStatusBaseline | undefined,
 ): boolean {
-  if (st.phase === "buying" || st.phase === "ranking") return false;
+  if (
+    st.phase === "buying" ||
+    st.phase === "ranking" ||
+    st.phase === "checking" ||
+    st.phase === "enabling" ||
+    st.phase === "confirming"
+  ) {
+    return false;
+  }
   const err = typeof st.error === "string" ? st.error.trim() : "";
   if (
     !err ||
