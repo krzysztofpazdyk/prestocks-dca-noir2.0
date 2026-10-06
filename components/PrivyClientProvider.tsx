@@ -3,6 +3,7 @@
 import { PrivyProvider } from "@privy-io/react-auth";
 import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import { useMemo, type ReactNode } from "react";
+import { PrivyErrorBoundary } from "@/components/PrivyErrorBoundary";
 import { privyAppId, privyDevnetEndpoints } from "@/lib/privy-devnet";
 
 /**
@@ -18,10 +19,14 @@ export function PrivyClientProvider({ children }: { children: ReactNode }) {
         walletChainType: "solana-only" as const,
       },
       loginMethods: ["email", "google"] as ("email" | "google")[],
+      // createOnLogin opens EmbeddedWalletOnAccountCreateScreen without
+      // modalData.createWallet (onSuccess / onFailure). That throw replaces
+      // the app on the first email OTP. Wallets are created after login by
+      // useCreateWallet() from @privy-io/react-auth/solana, which sets those
+      // callbacks before the screen mounts. Ethereum stays off (Solana only).
       embeddedWallets: {
-        solana: {
-          createOnLogin: "users-without-wallets" as const,
-        },
+        ethereum: { createOnLogin: "off" as const },
+        solana: { createOnLogin: "off" as const },
       },
       solana: {
         rpcs: {
@@ -49,8 +54,10 @@ export function PrivyClientProvider({ children }: { children: ReactNode }) {
   if (!appId) return <>{children}</>;
 
   return (
-    <PrivyProvider appId={appId} config={config}>
-      {children}
-    </PrivyProvider>
+    <PrivyErrorBoundary>
+      <PrivyProvider appId={appId} config={config}>
+        {children}
+      </PrivyProvider>
+    </PrivyErrorBoundary>
   );
 }

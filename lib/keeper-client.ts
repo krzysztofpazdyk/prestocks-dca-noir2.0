@@ -624,10 +624,9 @@ export async function keeperStatus(
         result: { ...data, source: data.source ?? "daemon" },
       };
     }
-    if (r.status === 401 || r.status === 403) {
-      // Signed POST rejected — drop sig cache so next attempt re-prompts.
-      clearStatusAuthCache(key);
-    }
+    // 401/403: keep the status signature. Clearing it made the connect poller
+    // open "Sign message" again on every tick. One approved action:status
+    // signature is reused until it expires (SIG_TTL_S).
     if (data && r.status !== 0) {
       return { session: null, result: statusErrorFrom(data, r.status) };
     }

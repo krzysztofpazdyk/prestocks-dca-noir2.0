@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLogin, usePrivy } from "@privy-io/react-auth";
+import { useCreateWallet } from "@privy-io/react-auth/solana";
 import {
   WalletReadyState,
   type WalletName,
@@ -17,6 +18,7 @@ import {
   runConnectJob,
 } from "@/lib/connect-wallet";
 import { privyAppId } from "@/lib/privy-devnet";
+import { hasSolanaEmbeddedWallet } from "@/lib/privy-user";
 import {
   PRIVY_WALLET_ICON,
   PRIVY_WALLET_NAME,
@@ -239,25 +241,56 @@ function PrivyConnect() {
   const { t } = useI18n();
   const tRef = useRef(t);
   const job = useConnectJob();
-  const { ready, authenticated, logout } = usePrivy();
+  const { ready, authenticated, logout, user } = usePrivy();
+  const { createWallet } = useCreateWallet();
   const wantPrivy = useRef(false);
   const requestRef = useRef(job.requestConnect);
   const cancelRef = useRef(job.cancel);
   const failRef = useRef(job.fail);
+  const createRef = useRef(createWallet);
+  const ensureRef = useRef<
+    (accountUser: Parameters<typeof hasSolanaEmbeddedWallet>[0]) => Promise<boolean>
+  >(async () => false);
 
   useEffect(() => {
     tRef.current = t;
     requestRef.current = job.requestConnect;
     cancelRef.current = job.cancel;
     failRef.current = job.fail;
+    createRef.current = createWallet;
+    ensureRef.current = async (accountUser) => {
+      // Returning users already have the embedded address. createWallet()
+      // would no-op or open UI; skip it and connect the standard wallet.
+      if (hasSolanaEmbeddedWallet(accountUser)) return true;
+      try {
+        await createRef.current();
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/already/i.test(message)) return true;
+        if (/exit|cancel|closed|dismiss/i.test(message)) {
+          cancelRef.current();
+          return false;
+        }
+        failRef.current(tRef.current("connect.failed"));
+        return false;
+      }
+    };
   });
 
   const loginCallbacks = useMemo(
     () => ({
-      onComplete: () => {
+      onComplete: (params: {
+        user?: Parameters<typeof hasSolanaEmbeddedWallet>[0];
+      }) => {
+        // Fires on mount when a session already exists. Connect only after
+        // the user picked Privy (autoConnect stays false).
         if (!wantPrivy.current) return;
         wantPrivy.current = false;
-        requestRef.current(PRIVY_WALLET_NAME);
+        void (async () => {
+          const ok = await ensureRef.current(params.user);
+          if (ok) requestRef.current(PRIVY_WALLET_NAME);
+        })();
       },
       onError: (code: string) => {
         wantPrivy.current = false;
@@ -281,13 +314,22 @@ function PrivyConnect() {
     job.clearError();
     if (authenticated) {
       wantPrivy.current = false;
-      job.requestConnect(PRIVY_WALLET_NAME);
-      return "connect";
+      if (hasSolanaEmbeddedWallet(user)) {
+        job.requestConnect(PRIVY_WALLET_NAME);
+        return "connect";
+      }
+      // Authenticated, but the first create crashed or was skipped.
+      // Close our list so Privy's create screen is the only dialog.
+      void (async () => {
+        const ok = await ensureRef.current(user);
+        if (ok) requestRef.current(PRIVY_WALLET_NAME);
+      })();
+      return "login";
     }
     wantPrivy.current = true;
     login();
     return "login";
-  }, [authenticated, job, login, ready, t]);
+  }, [authenticated, job, login, ready, t, user]);
 
   const onLogout = useCallback(async () => {
     wantPrivy.current = false;

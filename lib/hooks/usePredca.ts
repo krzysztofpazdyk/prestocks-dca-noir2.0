@@ -297,15 +297,64 @@ function usePredcaImpl() {
     [lastRun],
   );
 
+  async function confirmLanded(signature: string): Promise<void> {
+    const started = Date.now();
+    while (Date.now() - started < 45_000) {
+      const { value } = await connection.getSignatureStatuses([signature]);
+      const row = value[0];
+      if (row?.err) {
+        throw new Error("Transakcja odrzucona przez Devnet.");
+      }
+      if (
+        row?.confirmationStatus === "confirmed" ||
+        row?.confirmationStatus === "finalized"
+      ) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    throw new Error(
+      "Brak potwierdzenia transakcji na Devnet. Spróbuj ponownie.",
+    );
+  }
+
   async function withTx<T>(
     fn: () => Promise<T>,
     success: string,
+    opts?: { requireVaultIncrease?: boolean },
   ): Promise<T | null> {
     reportError(null);
     setOkMsg(null);
     setTxPending(true);
+    const vaultBefore =
+      opts?.requireVaultIncrease && owner
+        ? ((await fetchVaultBalance(connection, owner)) ?? 0)
+        : null;
     try {
       const result = await fn();
+      if (opts?.requireVaultIncrease && owner) {
+        if (typeof result === "string" && result.length > 0) {
+          await confirmLanded(result);
+        }
+        // Same RPC can confirm on one replica and still serve the old
+        // vault balance from another. Poll briefly, then fail honestly.
+        const before = vaultBefore ?? 0;
+        let vaultAfter = before;
+        const balanceStarted = Date.now();
+        while (Date.now() - balanceStarted < 12_000) {
+          vaultAfter = (await fetchVaultBalance(connection, owner)) ?? 0;
+          if (vaultAfter > before + 1e-6) break;
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        if (!(vaultAfter > before + 1e-6)) {
+          const unchanged =
+            "Podpis przyjęty, ale saldo vault się nie zmieniło. Spróbuj wpłacić ponownie.";
+          await refresh();
+          // refresh() clears the error at the start. Set it again after.
+          reportError(unchanged);
+          return null;
+        }
+      }
       setOkMsg(success);
       await refresh();
       return result;
@@ -370,7 +419,10 @@ function usePredcaImpl() {
           .instruction();
         const tx = new Transaction().add(initIx, depositIx);
         return provider.sendAndConfirm(tx);
-      }, `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`);
+      },
+      `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
+      { requireVaultIncrease: isPrivy },
+    );
     }
 
     return withTx(
@@ -383,6 +435,7 @@ function usePredcaImpl() {
           })
           .rpc(),
       `Wpłacono ${amountUsd} USDC do vault.`,
+      { requireVaultIncrease: isPrivy },
     );
   }
 
