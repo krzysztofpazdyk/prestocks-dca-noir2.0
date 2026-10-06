@@ -120,6 +120,16 @@ const sessionInflight = new Map<
   string,
   Promise<{ session: SessionCached | null; result: KeeperRunResult | null }>
 >();
+/**
+ * Bumped on clear so an in-flight sign cannot write the cache back after
+ * disconnect. Per-owner bumps do not invalidate other wallets.
+ */
+let statusAuthEpoch = 0;
+const statusAuthEpochByOwner = new Map<string, number>();
+
+function authGeneration(owner: string): number {
+  return statusAuthEpoch + (statusAuthEpochByOwner.get(owner) ?? 0);
+}
 
 function parseExpiresFromMessage(message: string): number {
   const m = /expires:(\d+)/i.exec(message);
@@ -204,8 +214,14 @@ function getCachedSession(owner: string): SessionCached | null {
   return null;
 }
 
-function setCachedSession(owner: string, token: string, expiresAt: number): void {
+function setCachedSession(
+  owner: string,
+  token: string,
+  expiresAt: number,
+  generation?: number,
+): void {
   const key = owner.trim();
+  if (generation !== undefined && generation !== authGeneration(key)) return;
   const session: SessionCached = { token, expiresAt, owner: key };
   sessionCache.set(key, session);
   writeStoredSession(session);
@@ -229,30 +245,45 @@ export async function getStatusAuth(
   }
   const pending = statusAuthInflight.get(key);
   if (pending) return pending;
+  const generation = authGeneration(key);
   const promise = (async () => {
     const auth = await signKeeperAuth(signMessage, "status", key);
+    if (authGeneration(key) !== generation) return auth;
     const expiresAt = parseExpiresFromMessage(auth.message);
     statusAuthCache.set(key, { ...auth, expiresAt });
     return auth;
   })().finally(() => {
-    statusAuthInflight.delete(key);
+    if (statusAuthInflight.get(key) === promise) statusAuthInflight.delete(key);
   });
   statusAuthInflight.set(key, promise);
   return promise;
 }
 
-/** Drop cached status auth + session (e.g. after wallet disconnect / 401). */
+/**
+ * Drop status signature, Bearer session, localStorage, and in-flight sign/mint
+ * for one owner. Omit owner to drop every wallet. Wallet change and disconnect
+ * call this. A 401 on Bearer uses clearSessionOnly so the status signature
+ * can still be reused until SIG_TTL_S.
+ */
 export function clearStatusAuthCache(owner?: string): void {
   if (owner) {
     const key = owner.trim();
+    if (!key) return;
+    statusAuthEpochByOwner.set(key, (statusAuthEpochByOwner.get(key) ?? 0) + 1);
     statusAuthCache.delete(key);
     sessionCache.delete(key);
+    statusAuthInflight.delete(key);
+    sessionInflight.delete(key);
     removeStoredSession(key);
-  } else {
-    statusAuthCache.clear();
-    sessionCache.clear();
-    removeStoredSession();
+    return;
   }
+  statusAuthEpoch += 1;
+  statusAuthEpochByOwner.clear();
+  statusAuthCache.clear();
+  sessionCache.clear();
+  statusAuthInflight.clear();
+  sessionInflight.clear();
+  removeStoredSession();
 }
 
 async function keeperFetch(
@@ -505,7 +536,11 @@ type StatusMintResult = {
   result: KeeperRunResult | null;
 };
 
-function ingestSessionFromPayload(owner: string, data: StatusWithSession | null): void {
+function ingestSessionFromPayload(
+  owner: string,
+  data: StatusWithSession | null,
+  generation?: number,
+): void {
   if (!data) return;
   const raw = data as StatusWithSession & {
     session_token?: string;
@@ -525,7 +560,7 @@ function ingestSessionFromPayload(owner: string, data: StatusWithSession | null)
   if (token && Number.isFinite(exp) && exp > 0) {
     // Accept ms timestamps defensively.
     const expSec = exp > 1e12 ? Math.floor(exp / 1000) : Math.floor(exp);
-    setCachedSession(owner, token, expSec);
+    setCachedSession(owner, token, expSec, generation);
   }
 }
 
@@ -579,10 +614,16 @@ export async function keeperStatus(
     );
 
   const signAndMint = async (): Promise<StatusMintResult> => {
+    const generation = authGeneration(key);
+    const dropped = (): StatusMintResult => ({
+      session: null,
+      result: { ok: false, error: "keeper_unreachable" },
+    });
     // Another poll may have minted while we waited on inflight/401.
     const raced = getCachedSession(key);
     if (raced) {
       const br = await fetchWithBearer(raced.token);
+      if (authGeneration(key) !== generation) return dropped();
       if (
         br.data &&
         br.status !== 0 &&
@@ -590,7 +631,7 @@ export async function keeperStatus(
         br.status !== 401 &&
         br.status !== 403
       ) {
-        ingestSessionFromPayload(key, br.data as StatusWithSession);
+        ingestSessionFromPayload(key, br.data as StatusWithSession, generation);
         return {
           session: getCachedSession(key),
           result: { ...br.data, source: br.data.source ?? "daemon" },
@@ -607,6 +648,7 @@ export async function keeperStatus(
         result: { ok: false, error: `sign_rejected: ${msg}` },
       };
     }
+    if (authGeneration(key) !== generation) return dropped();
     const r = await keeperFetch(
       "/status",
       {
@@ -616,9 +658,10 @@ export async function keeperStatus(
       },
       8000,
     );
+    if (authGeneration(key) !== generation) return dropped();
     const data = r.data as StatusWithSession | null;
     if (data && r.status !== 0 && r.ok && r.status !== 401 && r.status !== 403) {
-      ingestSessionFromPayload(key, data);
+      ingestSessionFromPayload(key, data, generation);
       return {
         session: getCachedSession(key),
         result: { ...data, source: data.source ?? "daemon" },
@@ -636,9 +679,13 @@ export async function keeperStatus(
   // 1) Try existing session (memory + localStorage) — no wallet prompt
   const existing = getCachedSession(key);
   if (existing) {
+    const generation = authGeneration(key);
     const r = await fetchWithBearer(existing.token);
+    if (authGeneration(key) !== generation) {
+      return { ok: false, error: "keeper_unreachable" };
+    }
     if (r.data && r.status !== 0 && r.ok && r.status !== 401 && r.status !== 403) {
-      ingestSessionFromPayload(key, r.data as StatusWithSession);
+      ingestSessionFromPayload(key, r.data as StatusWithSession, generation);
       return { ...r.data, source: r.data.source ?? "daemon" };
     }
     if (r.status === 401 || r.status === 403) {
@@ -660,7 +707,7 @@ export async function keeperStatus(
   }
 
   const mintPromise = signAndMint().finally(() => {
-    sessionInflight.delete(key);
+    if (sessionInflight.get(key) === mintPromise) sessionInflight.delete(key);
   });
   sessionInflight.set(key, mintPromise);
   const minted = await mintPromise;

@@ -13,6 +13,7 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import {
+  clearStatusAuthCache,
   keeperDisable,
   keeperEnable,
   keeperHealth,
@@ -123,6 +124,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
    * replace phase or message (startCycle ok / error / blocked).
    */
   const bannerHoldUntilRef = useRef(0);
+  /** Last pubkey this effect observed. Null until the first run. */
+  const prevOwnerRef = useRef<string | null>(null);
 
   const ownerKey = publicKey?.toBase58() ?? null;
   const signReady = typeof signMessage === "function";
@@ -138,6 +141,13 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   }, []);
 
   useEffect(() => {
+    const prev = prevOwnerRef.current;
+    if (prev && prev !== ownerKey) {
+      // Disconnect drops every wallet. A switch drops only the one we left.
+      if (!ownerKey) clearStatusAuthCache();
+      else clearStatusAuthCache(prev);
+    }
+    prevOwnerRef.current = ownerKey;
     statusEpochRef.current += 1;
     seenKeeperRunRef.current = null;
     bannerHoldUntilRef.current = 0;

@@ -17,6 +17,7 @@ import {
   ConnectTimeoutError,
   runConnectJob,
 } from "@/lib/connect-wallet";
+import { clearStatusAuthCache } from "@/lib/keeper-client";
 import { privyAppId } from "@/lib/privy-devnet";
 import { hasSolanaEmbeddedWallet } from "@/lib/privy-user";
 import {
@@ -52,7 +53,7 @@ function useConnectJob() {
     wallet,
     select,
     connect,
-    disconnect,
+    disconnect: walletDisconnect,
     connected,
     connecting,
     disconnecting,
@@ -107,6 +108,11 @@ function useConnectJob() {
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
+
+  const disconnect = useCallback(async () => {
+    await walletDisconnect();
+    clearStatusAuthCache();
+  }, [walletDisconnect]);
 
   useEffect(() => {
     if (!job) return;
