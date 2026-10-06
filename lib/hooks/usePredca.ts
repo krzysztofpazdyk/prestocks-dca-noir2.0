@@ -18,19 +18,21 @@ import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
 import { withOneStaleBlockhashRetry } from "@/lib/privy-blockhash";
 import {
   leaveManualBuy,
+  noteUnconfirmedRunIndex,
   recoverRunCollision,
   tryEnterManualBuy,
 } from "@/lib/manual-buy-guard";
 import {
   CONFIRMED_VAULT_BACKGROUND_POLL_MS,
   CONFIRMED_VAULT_LAG_MSG,
+  CONFIRM_STILL_PENDING_MSG,
   POST_CONFIRM_VAULT_POLL_MS,
   UNCONFIRMED_TIMEOUT_MSG,
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
   outcomeAfterVaultCheck,
 } from "@/lib/vault-follow-up";
-import { Transaction } from "@solana/web3.js";
+import { Transaction, type PublicKey } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
   allMockMints,
@@ -175,6 +177,15 @@ function usePredcaImpl() {
   const buyLockRef = useRef(false);
   /** Run indices this card created. A collision on one of these is not retried. */
   const createdRunIndicesRef = useRef(new Set<number>());
+  /** Signature broadcast, not yet confirmed or rejected. Keeps Deposit/Kup disabled. */
+  const pendingSigRef = useRef<string | null>(null);
+  const [pendingSignature, setPendingSignatureState] = useState<string | null>(null);
+  const watchingSigRef = useRef<string | null>(null);
+  const ownerRef = useRef<PublicKey | null>(null);
+  function setPendingSignature(signature: string | null) {
+    pendingSigRef.current = signature;
+    setPendingSignatureState(signature);
+  }
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
   const lastErrorRef = useRef<string | null>(null);
@@ -200,6 +211,14 @@ function usePredcaImpl() {
   );
 
   const owner = wallet?.publicKey ?? null;
+  ownerRef.current = owner;
+
+  useEffect(() => {
+    if (owner) return;
+    if (!pendingSigRef.current) return;
+    pendingSigRef.current = null;
+    setPendingSignatureState(null);
+  }, [owner]);
 
   const refresh = useCallback(async () => {
     reportError(null);
@@ -334,9 +353,7 @@ function usePredcaImpl() {
       }
       await new Promise((resolve) => setTimeout(resolve, 800));
     }
-    throw new Error(
-      "Brak potwierdzenia transakcji na Devnet. Spróbuj ponownie.",
-    );
+    throw new Error(CONFIRM_STILL_PENDING_MSG);
   }
 
   async function pollVaultAbove(before: number, budgetMs: number): Promise<boolean> {
@@ -378,6 +395,114 @@ function usePredcaImpl() {
     }
   }
 
+  /** Same vault read as a confirmed deposit (fix B). Empty signature keeps the short poll. */
+  async function applyConfirmedVault(
+    epoch: number,
+    signature: string,
+    before: number,
+    success: string,
+  ): Promise<"error" | "ok"> {
+    const increased = await pollVaultAbove(
+      before,
+      signature ? POST_CONFIRM_VAULT_POLL_MS : 12_000,
+    );
+    const outcome = outcomeAfterVaultCheck({
+      confirmed: signature.length > 0,
+      increased,
+      success,
+    });
+    if (outcome.error) {
+      await refresh();
+      if (vaultFollowEpoch.current === epoch) reportError(outcome.error);
+      return "error";
+    }
+    const note =
+      !increased && signature
+        ? `${CONFIRMED_VAULT_LAG_MSG} ${explorerTxUrl(signature)}`
+        : outcome.ok;
+    await refresh();
+    if (vaultFollowEpoch.current !== epoch) return "ok";
+    reportError(null);
+    setOkMsg(note);
+    if (!increased && signature) {
+      void watchVaultCatchUp(epoch, before, success);
+    }
+    return "ok";
+  }
+
+  /**
+   * Keeps Deposit/Kup disabled until this signature confirms or is rejected.
+   * A later tx (withdraw is still enabled) bumps the epoch; keep polling, but
+   * do not overwrite that newer toast.
+   */
+  function watchUnresolved(follow: {
+    epoch: number;
+    signature: string;
+    success: string;
+    requireVaultIncrease: boolean;
+    vaultBefore: number | null;
+  }) {
+    if (watchingSigRef.current === follow.signature) return;
+    watchingSigRef.current = follow.signature;
+    void (async () => {
+      try {
+        while (pendingSigRef.current === follow.signature) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          if (pendingSigRef.current !== follow.signature) return;
+          if (!ownerRef.current) {
+            setPendingSignature(null);
+            return;
+          }
+          let row: Awaited<
+            ReturnType<typeof connection.getSignatureStatuses>
+          >["value"][number] = null;
+          try {
+            const { value } = await connection.getSignatureStatuses([
+              follow.signature,
+            ]);
+            row = value[0];
+          } catch {
+            continue;
+          }
+          if (row?.err) {
+            if (pendingSigRef.current !== follow.signature) return;
+            setPendingSignature(null);
+            if (vaultFollowEpoch.current !== follow.epoch) return;
+            setOkMsg(null);
+            reportError("Transakcja odrzucona przez Devnet.");
+            return;
+          }
+          if (
+            row?.confirmationStatus === "confirmed" ||
+            row?.confirmationStatus === "finalized"
+          ) {
+            if (pendingSigRef.current !== follow.signature) return;
+            setPendingSignature(null);
+            if (vaultFollowEpoch.current !== follow.epoch) return;
+            if (follow.requireVaultIncrease && ownerRef.current) {
+              await applyConfirmedVault(
+                follow.epoch,
+                follow.signature,
+                follow.vaultBefore ?? 0,
+                follow.success,
+              );
+              return;
+            }
+            await refresh();
+            if (vaultFollowEpoch.current !== follow.epoch) return;
+            reportError(null);
+            setOkMsg(follow.success);
+            return;
+          }
+        }
+      } finally {
+        if (watchingSigRef.current === follow.signature) {
+          watchingSigRef.current = null;
+        }
+      }
+    })();
+  }
+
   async function withTx<T>(
     fn: () => Promise<T>,
     success: string,
@@ -391,37 +516,6 @@ function usePredcaImpl() {
       opts?.requireVaultIncrease && owner
         ? ((await fetchVaultBalance(connection, owner)) ?? 0)
         : null;
-    /** Same vault read as a confirmed deposit (fix B). `signature` empty keeps the short poll. */
-    async function settleVaultOutcome(signature: string, result: T): Promise<T | null> {
-      const before = vaultBefore ?? 0;
-      const increased = await pollVaultAbove(
-        before,
-        signature ? POST_CONFIRM_VAULT_POLL_MS : 12_000,
-      );
-      const outcome = outcomeAfterVaultCheck({
-        confirmed: signature.length > 0,
-        increased,
-        success,
-      });
-      if (outcome.error) {
-        await refresh();
-        if (vaultFollowEpoch.current === epoch) reportError(outcome.error);
-        return null;
-      }
-      const note =
-        !increased && signature
-          ? `${CONFIRMED_VAULT_LAG_MSG} ${explorerTxUrl(signature)}`
-          : outcome.ok;
-      await refresh();
-      if (vaultFollowEpoch.current !== epoch) return result;
-      reportError(null);
-      setOkMsg(note);
-      if (!increased && signature) {
-        void watchVaultCatchUp(epoch, before, success);
-      }
-      return result;
-    }
-
     try {
       const result = await fn();
       if (opts?.requireVaultIncrease && owner) {
@@ -429,7 +523,13 @@ function usePredcaImpl() {
           typeof result === "string" && result.length > 0 ? result : "";
         if (signature) await confirmLanded(signature);
         // A confirmed tx can still read the old vault from another replica.
-        return await settleVaultOutcome(signature, result);
+        const settled = await applyConfirmedVault(
+          epoch,
+          signature,
+          vaultBefore ?? 0,
+          success,
+        );
+        return settled === "error" ? null : result;
       }
       setOkMsg(success);
       await refresh();
@@ -441,6 +541,7 @@ function usePredcaImpl() {
         return null;
       }
       const signature = pending.signature;
+      setPendingSignature(signature);
       if (vaultFollowEpoch.current === epoch) {
         reportError(null);
         setOkMsg(`${UNCONFIRMED_TIMEOUT_MSG} ${explorerTxUrl(signature)}`);
@@ -449,6 +550,7 @@ function usePredcaImpl() {
         await confirmLanded(signature);
       } catch (confirmErr) {
         if (isOnChainSignatureReject(confirmErr)) {
+          setPendingSignature(null);
           if (vaultFollowEpoch.current === epoch) {
             setOkMsg(null);
             reportError(
@@ -459,11 +561,25 @@ function usePredcaImpl() {
           }
           return null;
         }
-        // Still unknown. Leave the pending note — do not ask for another send.
+        // Still unknown. Leave Deposit/Kup disabled until the signature settles.
+        watchUnresolved({
+          epoch,
+          signature,
+          success,
+          requireVaultIncrease: Boolean(opts?.requireVaultIncrease && owner),
+          vaultBefore,
+        });
         return null;
       }
+      setPendingSignature(null);
       if (opts?.requireVaultIncrease && owner) {
-        return await settleVaultOutcome(signature, signature as T);
+        const settled = await applyConfirmedVault(
+          epoch,
+          signature,
+          vaultBefore ?? 0,
+          success,
+        );
+        return settled === "error" ? null : (signature as T);
       }
       await refresh();
       if (vaultFollowEpoch.current !== epoch) return signature as T;
@@ -727,9 +843,15 @@ function usePredcaImpl() {
         withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
 
       const submitAndRemember = async (runIndex: number) => {
-        const sig = await submitOnce(runIndex);
-        createdRunIndicesRef.current.add(runIndex);
-        return sig;
+        try {
+          const sig = await submitOnce(runIndex);
+          createdRunIndicesRef.current.add(runIndex);
+          return sig;
+        } catch (e) {
+          // Timeout may already have created this RunRecord. Do not buy the next index.
+          noteUnconfirmedRunIndex(createdRunIndicesRef.current, runIndex, e);
+          throw e;
+        }
       };
 
       return await withTx(async () => {
@@ -768,6 +890,9 @@ function usePredcaImpl() {
     status,
     loading,
     txPending,
+    /** Set while a broadcast signature is neither confirmed nor rejected. */
+    pendingSignature,
+    pendingSignatureNow: () => pendingSigRef.current,
     error,
     /** Immediate last tx/validation error after await (ref). */
     lastTxError: () => lastErrorRef.current ?? error,

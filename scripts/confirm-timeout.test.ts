@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAnchorError } from "../lib/predca";
 import {
+  CONFIRM_STILL_PENDING_MSG,
   UNCONFIRMED_TIMEOUT_MSG,
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
@@ -65,12 +66,8 @@ test("on-chain reject is an error; a later confirm wait is not", () => {
     isOnChainSignatureReject(new Error("Transakcja odrzucona przez Devnet.")),
     true,
   );
-  assert.equal(
-    isOnChainSignatureReject(
-      new Error("Brak potwierdzenia transakcji na Devnet. Spróbuj ponownie."),
-    ),
-    false,
-  );
+  assert.equal(isOnChainSignatureReject(new Error(CONFIRM_STILL_PENDING_MSG)), false);
+  assert.doesNotMatch(CONFIRM_STILL_PENDING_MSG, /spróbuj ponownie/i);
 });
 
 test("parseAnchorError keeps an 88-character signature", () => {

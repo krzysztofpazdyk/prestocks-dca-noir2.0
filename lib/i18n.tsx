@@ -114,6 +114,7 @@ const pl: Dict = {
   "btn.generating": "Generuję…",
   "btn.purchase": "Dokonaj zakupu",
   "btn.buying": "Kupuję…",
+  "btn.waiting": "Czekam…",
   "btn.txPending": "Transakcja…",
   "empty.generateTips": "Kliknij Wygeneruj rekomendacje.",
   "empty.connectWallet": "Podłącz portfel, potem wygeneruj rekomendacje.",
@@ -147,6 +148,8 @@ const pl: Dict = {
     "Zakup on-chain OK · sig {sig}… · ${amount} z vault → {tokens}",
   "msg.purchaseFail":
     "Zakup nieudany — szczegóły w sekcji Predca powyżej (czerwony komunikat).",
+  "msg.purchasePending":
+    "Zakup wysłany, Devnet jeszcze nie potwierdził · sig {sig}…. Nie wysyłaj drugi raz.",
   "msg.updatingBudget": "Aktualizuję budżet on-chain…",
   "msg.budgetSyncFail":
     "Nie udało się zaktualizować budżetu on-chain przed zakupem.",
@@ -359,6 +362,7 @@ const en: Dict = {
   "btn.generating": "Generating…",
   "btn.purchase": "Purchase",
   "btn.buying": "Buying…",
+  "btn.waiting": "Waiting…",
   "btn.txPending": "Transaction…",
   "empty.generateTips": "Click Generate recommendations.",
   "empty.connectWallet": "Connect wallet, then generate recommendations.",
@@ -392,6 +396,8 @@ const en: Dict = {
     "On-chain purchase OK · sig {sig}… · ${amount} from vault → {tokens}",
   "msg.purchaseFail":
     "Purchase failed — see details in the Predca section above (red message).",
+  "msg.purchasePending":
+    "Purchase sent, Devnet has not confirmed yet · sig {sig}…. Don't send it again.",
   "msg.updatingBudget": "Updating budget on-chain…",
   "msg.budgetSyncFail":
     "Could not update on-chain budget before purchase.",

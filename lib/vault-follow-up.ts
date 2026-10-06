@@ -38,6 +38,10 @@ export const TX_SIGNATURE_RE = /[1-9A-HJ-NP-Za-km-z]{80,90}/;
 export const UNCONFIRMED_TIMEOUT_MSG =
   "Transakcja wysłana. Devnet jeszcze nie potwierdził — nie wysyłaj jej drugi raz. Sprawdź podpis w explorerze.";
 
+/** confirmLanded gave up. No second-send nudge. */
+export const CONFIRM_STILL_PENDING_MSG =
+  "Brak potwierdzenia transakcji na Devnet.";
+
 function errorName(err: unknown): string {
   if (err instanceof Error) return err.name;
   if (err && typeof err === "object" && "name" in err) {
