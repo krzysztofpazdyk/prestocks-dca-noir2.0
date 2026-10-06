@@ -4,6 +4,9 @@
  * GitHub Pages is static and simulate_buy still needs a wallet signature, so
  * this runs in the open tab: one purchase per 7 days from the last successful
  * on-chain buy (RunRecord ts / lastRunTs).
+ *
+ * Keeper ranking is chosen by the keeper. Manual Buy on Overview uses the
+ * metrics list in the UI. Those paths are intentionally separate.
  */
 
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";

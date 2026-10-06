@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import {
   keeperDisable,
   keeperEnable,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/auto-weekly-buy";
 import { useI18n } from "@/lib/i18n";
 import { usePredca } from "@/lib/hooks/usePredca";
+import { keeperEnabledForConnectedOwner } from "@/lib/keeper-enabled";
 
 export type AutoBuyPhase =
   | "idle"
@@ -78,7 +80,8 @@ function keeperRunMarker(st: KeeperRunResult): string | null {
 let cycleInFlight = false;
 
 function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
-  const { connected, publicKey, signMessage } = useWallet();
+  const { connected, publicKey } = useWallet();
+  const signMessage = useKeeperSignMessage();
   const predca = usePredca();
   const { locale, t } = useI18n();
   const [enabled, setEnabledState] = useState(DEFAULT_SETTINGS.autoWeeklyBuy);
@@ -120,6 +123,9 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
    */
   const bannerHoldUntilRef = useRef(0);
 
+  const ownerKey = publicKey?.toBase58() ?? null;
+  const signReady = typeof signMessage === "function";
+
   const resetBannerState = useCallback(() => {
     setPhase("idle");
     setMessage(null);
@@ -131,44 +137,46 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   }, []);
 
   useEffect(() => {
-    const epoch = ++statusEpochRef.current;
+    statusEpochRef.current += 1;
     seenKeeperRunRef.current = null;
     bannerHoldUntilRef.current = 0;
-    // Drop prior wallet banner/status immediately; stay off until fresh status.
+    // Drop the previous owner's On immediately. Status below corrects it.
     resetBannerState();
     setPrefsReady(false);
     setKeeperMode(null);
     cycleInFlight = false;
+    if (ownerKey) ignoreOffUntilRef.current = Date.now() + 2000;
+  }, [ownerKey, resetBannerState]);
 
-    if (publicKey) ignoreOffUntilRef.current = Date.now() + 2000;
+  useEffect(() => {
+    if (!ownerKey || !signReady) return;
+    const epoch = statusEpochRef.current;
     let cancelled = false;
     void (async () => {
-      const owner = ownerRef.current;
       const sign = signMessageRef.current;
       const [st, health] = await Promise.all([
-        keeperStatus(owner ?? undefined, sign ?? undefined),
+        keeperStatus(ownerKey, sign ?? undefined),
         keeperHealthInfo(),
       ]);
       if (cancelled || statusEpochRef.current !== epoch) return;
       const modeFromStatus =
         st.mode === "live" || st.mode === "dry-run" ? st.mode : null;
       setKeeperMode(modeFromStatus ?? health.mode);
-      const keeperOn = st.enabled === true;
-      const configuredOwner =
-        (typeof st.owner === "string" && st.owner.trim()) || null;
-      const sameOwner =
-        !owner || !configuredOwner || owner === configuredOwner;
-      // Per-owner status when wallet known; do not auto-sign enable on mount.
-      // Keeper is source of truth for this wallet — never OR local over keeper Off.
-      const showOn = Boolean(owner) && sameOwner && keeperOn;
-      setEnabledState(showOn);
-      writeAutoWeeklyBuy(showOn, owner);
+      // Unknown status (no sign, unreachable, rejected) must not force Off.
+      const verdict = keeperEnabledForConnectedOwner(st, ownerKey);
+      if (verdict === true) {
+        setEnabledState(true);
+        writeAutoWeeklyBuy(true, ownerKey);
+      } else if (verdict === false) {
+        setEnabledState(false);
+        writeAutoWeeklyBuy(false, ownerKey);
+      }
       setPrefsReady(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [publicKey, resetBannerState]);
+  }, [ownerKey, signReady]);
   const setEnabled = useCallback((value: boolean) => {
     if (!value && Date.now() < ignoreOffUntilRef.current) {
       return;
@@ -321,6 +329,9 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         }
         throw new Error(err);
       }
+      // Keeper accepted enable. Show On before the purchase checks; forceOff clears it.
+      setEnabledState(true);
+      writeAutoWeeklyBuy(true, cycleOwner);
       const forceOff = async (reason: string) => {
         // Epoch moves in the wallet effect, after ownerRef already points at
         // the new pubkey. Bail before any disable so it cannot follow the ref.
@@ -446,9 +457,20 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     if (st.mode === "live" || st.mode === "dry-run") {
       setKeeperMode(st.mode);
     }
+    // Toggle follows keeper for this owner. A stale Off during the banner hold
+    // must not clobber a just-confirmed enable. Unknown status must not force Off.
+    const verdict = keeperEnabledForConnectedOwner(st, wallet);
+    const hold = isBannerHoldActive(bannerHoldUntilRef.current, Date.now());
+    if (verdict === true && wallet && !enabledRef.current) {
+      setEnabledState(true);
+      writeAutoWeeklyBuy(true, wallet);
+    } else if (verdict === false && wallet && !hold && enabledRef.current) {
+      setEnabledState(false);
+      writeAutoWeeklyBuy(false, wallet);
+    }
     // startCycle just showed ok / error / blocked. Keeper status often still
     // says off and would replace that banner with "wyłączone".
-    if (isBannerHoldActive(bannerHoldUntilRef.current, Date.now())) {
+    if (hold) {
       const heldNext = keeperNextBuyAtMs(st);
       if (heldNext != null) {
         setNextAt(heldNext);
@@ -456,25 +478,12 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       }
       return;
     }
+    if (verdict === null) return;
     const configuredOwner =
       (typeof st.owner === "string" && st.owner.trim()) || null;
     const sameOwner =
       !!wallet && !!configuredOwner && wallet === configuredOwner;
-    // Matching wallet: keeper enabled is sole source of truth (never OR local).
-    if (sameOwner && st.enabled === true && !enabledRef.current) {
-      setEnabledState(true);
-      writeAutoWeeklyBuy(true, wallet);
-    }
-    if (sameOwner && st.enabled === false && enabledRef.current) {
-      setEnabledState(false);
-      writeAutoWeeklyBuy(false, wallet);
-    }
-    // Non-matching connected wallet should not inherit another owner's ON.
-    if (wallet && configuredOwner && !sameOwner && enabledRef.current) {
-      setEnabledState(false);
-      writeAutoWeeklyBuy(false, wallet);
-    }
-    const on = Boolean(wallet && configuredOwner && sameOwner && st.enabled === true);
+    const on = Boolean(sameOwner && st.enabled === true);
     if (!on) {
       setPhase("idle");
       setDue(false);

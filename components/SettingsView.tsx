@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
+import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { formatUsd } from "@/lib/predca";
@@ -79,7 +80,8 @@ function baselinesEqual(a: PrefsBaseline | null, b: PrefsBaseline): boolean {
 export function SettingsView() {
   const predca = usePredca();
   const autoBuy = useAutoWeeklyBuy();
-  const { connected, publicKey, signMessage } = useWallet();
+  const { connected, publicKey } = useWallet();
+  const signMessage = useKeeperSignMessage();
   const signMessageRef = useRef(signMessage);
   signMessageRef.current = signMessage;
   const { t } = useI18n();
@@ -341,6 +343,9 @@ export function SettingsView() {
         </p>
         <h1 className="mt-1 text-xl font-semibold text-[#e8eef5]">{t("settings.title")}</h1>
         <p className="mt-1 text-xs text-[#8b95a8]">{t("settings.intro")}</p>
+        <p className="mt-3 text-xs leading-relaxed text-[#c5cedb]">
+          {t("privy.vaultNote")}
+        </p>
       </div>
 
       {predca.error && (

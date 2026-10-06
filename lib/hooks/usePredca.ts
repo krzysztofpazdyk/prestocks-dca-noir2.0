@@ -13,6 +13,9 @@ import {
 } from "react";
 import { AnchorProvider } from "@coral-xyz/anchor";
 import { useConnection, useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
+import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
+import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
+import { isStaleBlockhashError } from "@/lib/privy-blockhash";
 import { Transaction } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
@@ -123,10 +126,26 @@ function runToLastPurchase(run: RunRecordData): OnChainLastPurchase {
   };
 }
 
+function privySendNotReady(): Promise<string> {
+  return Promise.reject(
+    new Error(
+      "Portfel Privy jest wybrany, ale podpis jeszcze nie jest gotowy. Spróbuj ponownie.",
+    ),
+  );
+}
+
 function usePredcaImpl() {
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
-  const { sendTransaction } = useWallet();
+  const adapterWallet = useAnchorWallet();
+  const { sendTransaction: adapterSend, wallet: selectedWallet } = useWallet();
+  const privyTx = usePrivyTxOverride();
+  const isPrivy = selectedWallet?.adapter.name === PRIVY_WALLET_NAME;
+  // Privy's Wallet Standard signTransaction defaults to mainnet when chain is
+  // omitted. The bridge passes solana:devnet. Do not fall through to the adapter.
+  const wallet = isPrivy ? (privyTx?.anchorWallet ?? null) : adapterWallet;
+  const sendTransaction = isPrivy
+    ? (privyTx?.sendTransaction ?? privySendNotReady)
+    : adapterSend;
   const mint = useMemo(() => usdcMintOrNull(), []);
 
   const [config, setConfig] = useState<UserConfigData | null>(null);
@@ -278,15 +297,64 @@ function usePredcaImpl() {
     [lastRun],
   );
 
+  async function confirmLanded(signature: string): Promise<void> {
+    const started = Date.now();
+    while (Date.now() - started < 45_000) {
+      const { value } = await connection.getSignatureStatuses([signature]);
+      const row = value[0];
+      if (row?.err) {
+        throw new Error("Transakcja odrzucona przez Devnet.");
+      }
+      if (
+        row?.confirmationStatus === "confirmed" ||
+        row?.confirmationStatus === "finalized"
+      ) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    }
+    throw new Error(
+      "Brak potwierdzenia transakcji na Devnet. Spróbuj ponownie.",
+    );
+  }
+
   async function withTx<T>(
     fn: () => Promise<T>,
     success: string,
+    opts?: { requireVaultIncrease?: boolean },
   ): Promise<T | null> {
     reportError(null);
     setOkMsg(null);
     setTxPending(true);
+    const vaultBefore =
+      opts?.requireVaultIncrease && owner
+        ? ((await fetchVaultBalance(connection, owner)) ?? 0)
+        : null;
     try {
       const result = await fn();
+      if (opts?.requireVaultIncrease && owner) {
+        if (typeof result === "string" && result.length > 0) {
+          await confirmLanded(result);
+        }
+        // Same RPC can confirm on one replica and still serve the old
+        // vault balance from another. Poll briefly, then fail honestly.
+        const before = vaultBefore ?? 0;
+        let vaultAfter = before;
+        const balanceStarted = Date.now();
+        while (Date.now() - balanceStarted < 12_000) {
+          vaultAfter = (await fetchVaultBalance(connection, owner)) ?? 0;
+          if (vaultAfter > before + 1e-6) break;
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        if (!(vaultAfter > before + 1e-6)) {
+          const unchanged =
+            "Podpis przyjęty, ale saldo vault się nie zmieniło. Spróbuj wpłacić ponownie.";
+          await refresh();
+          // refresh() clears the error at the start. Set it again after.
+          reportError(unchanged);
+          return null;
+        }
+      }
       setOkMsg(success);
       await refresh();
       return result;
@@ -351,7 +419,10 @@ function usePredcaImpl() {
           .instruction();
         const tx = new Transaction().add(initIx, depositIx);
         return provider.sendAndConfirm(tx);
-      }, `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`);
+      },
+      `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
+      { requireVaultIncrease: isPrivy },
+    );
     }
 
     return withTx(
@@ -364,6 +435,7 @@ function usePredcaImpl() {
           })
           .rpc(),
       `Wpłacono ${amountUsd} USDC do vault.`,
+      { requireVaultIncrease: isPrivy },
     );
   }
 
@@ -527,9 +599,20 @@ function usePredcaImpl() {
         .rpc();
     };
 
+    const submitOnce = async (runIndex: number) => {
+      try {
+        return await submitAt(runIndex);
+      } catch (e) {
+        // Slow Privy approval can expire the blockhash. One rebuild + re-prompt.
+        // Phantom and Solflare keep the single attempt.
+        if (!isPrivy || !isStaleBlockhashError(e)) throw e;
+        return await submitAt(runIndex);
+      }
+    };
+
     return withTx(async () => {
       try {
-        return await submitAt(nextIndex);
+        return await submitOnce(nextIndex);
       } catch (e) {
         if (!isRunAlreadyExists(e)) throw e;
         const retryIndex = await findNextRunIndex(program, owner);
@@ -537,7 +620,7 @@ function usePredcaImpl() {
           throw new Error(RUN_INDEX_TAKEN_MSG);
         }
         try {
-          return await submitAt(retryIndex);
+          return await submitOnce(retryIndex);
         } catch (e2) {
           if (isRunAlreadyExists(e2)) throw new Error(RUN_INDEX_TAKEN_MSG);
           throw e2;
