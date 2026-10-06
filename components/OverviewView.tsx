@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
@@ -22,6 +22,7 @@ import {
 } from "@/lib/portfolio-state";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import { usePredca } from "@/lib/hooks/usePredca";
+import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import {
   clusterShortPl,
   formatUsd,
@@ -102,6 +103,9 @@ export function OverviewView() {
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
+  /** Sync lock for the whole Kup click, including budget sync before simulateBuy. */
+  const buyInFlightRef = useRef(false);
+  const [buyInFlight, setBuyInFlight] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [faucetMsg, setFaucetMsg] = useState<string | null>(null);
   const [faucetErr, setFaucetErr] = useState<string | null>(null);
@@ -216,112 +220,119 @@ export function OverviewView() {
   }
 
   async function handlePurchase() {
-    if (top3.length === 0) {
-      setPurchaseMsg(t("msg.noRecs"));
-      return;
-    }
+    if (!tryEnterManualBuy(buyInFlightRef, predca.txPending)) return;
+    setBuyInFlight(true);
+    try {
+      if (top3.length === 0) {
+        setPurchaseMsg(t("msg.noRecs"));
+        return;
+      }
 
-    const tokenNames = top3.slice(0, 3).map((r) => r.name);
-    // LS is SoT for intended amount (sync on-chain before simulate_buy when dirty).
-    const intendedAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
+      const tokenNames = top3.slice(0, 3).map((r) => r.name);
+      // LS is SoT for intended amount (sync on-chain before simulate_buy when dirty).
+      const intendedAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
 
-    // Prefer on-chain simulate_buy when Predca is ready.
-    if (onChainReady) {
+      // Prefer on-chain simulate_buy when Predca is ready.
+      if (onChainReady) {
+        if (
+          availableVaultUsdc == null ||
+          !Number.isFinite(availableVaultUsdc) ||
+          availableVaultUsdc < intendedAmount
+        ) {
+          setPurchaseMsg(
+            t("msg.vaultLowOnChain", {
+              have: (availableVaultUsdc ?? 0).toFixed(2),
+              need: intendedAmount.toFixed(2),
+            }),
+          );
+          return;
+        }
+
+        // simulate_buy spends on-chain weeklyBudgetUsdc — sync LS → chain first.
+        const lsAmount = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
+        if (budgetsDiffer(lsAmount, predca.weeklyBudgetUsd)) {
+          setPurchaseMsg(t("msg.updatingBudget"));
+          const budgetSig = await predca.setWeeklyBudget(lsAmount);
+          if (!budgetSig) {
+            const err = predca.lastTxError();
+            setPurchaseMsg(
+              err
+                ? `${t("msg.budgetSyncFail")}: ${err}`
+                : t("msg.budgetSyncFail"),
+            );
+            return;
+          }
+          // setWeeklyBudget's withTx already refreshed; simulateBuy re-fetches budget.
+        }
+
+        setPurchaseMsg(null);
+        const sig = await predca.simulateBuy(tokenNames);
+        if (sig) {
+          setPurchaseMsg(
+            t("msg.purchaseOk", {
+              sig: sig.slice(0, 8),
+              amount: intendedAmount.toFixed(2),
+              tokens: tokenNames.join(" · "),
+            }),
+          );
+        } else {
+          const err = predca.lastTxError();
+          setPurchaseMsg(
+            err
+              ? `${t("msg.purchaseFail")}: ${err}`
+              : t("msg.purchaseFail"),
+          );
+        }
+        return;
+      }
+
+      // Offline / disconnected mock path (localStorage).
       if (
         availableVaultUsdc == null ||
         !Number.isFinite(availableVaultUsdc) ||
-        availableVaultUsdc < intendedAmount
+        availableVaultUsdc < purchaseAmount
       ) {
         setPurchaseMsg(
-          t("msg.vaultLowOnChain", {
-            have: (availableVaultUsdc ?? 0).toFixed(2),
-            need: intendedAmount.toFixed(2),
-          }),
+          connected
+            ? t("msg.predcaNotReady")
+            : t("msg.vaultLowMock", {
+                have: (availableVaultUsdc ?? 0).toFixed(2),
+                need: purchaseAmount.toFixed(2),
+              }),
         );
         return;
       }
 
-      // simulate_buy spends on-chain weeklyBudgetUsdc — sync LS → chain first.
-      const lsAmount = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
-      if (budgetsDiffer(lsAmount, predca.weeklyBudgetUsd)) {
-        setPurchaseMsg(t("msg.updatingBudget"));
-        const budgetSig = await predca.setWeeklyBudget(lsAmount);
-        if (!budgetSig) {
-          const err = predca.lastTxError();
-          setPurchaseMsg(
-            err
-              ? `${t("msg.budgetSyncFail")}: ${err}`
-              : t("msg.budgetSyncFail"),
-          );
-          return;
-        }
-        // setWeeklyBudget's withTx already refreshed; simulateBuy re-fetches budget.
-      }
-
-      setPurchaseMsg(null);
-      const sig = await predca.simulateBuy(tokenNames);
-      if (sig) {
+      try {
+        const next = applyPurchase(
+          {
+            balances,
+            vaultUsdc: availableVaultUsdc,
+            holdings,
+            lastPurchase: lastPurchase ?? emptyPurchase(),
+          },
+          { amountUsd: purchaseAmount, tokens: tokenNames },
+        );
+        savePortfolioState(next);
+        setBalances(next.balances);
+        setVaultUsdc(next.vaultUsdc);
+        setHoldings(next.holdings);
+        setLastPurchase(next.lastPurchase);
+        setPortfolioRevision((r) => r + 1);
         setPurchaseMsg(
-          t("msg.purchaseOk", {
-            sig: sig.slice(0, 8),
-            amount: intendedAmount.toFixed(2),
+          t("msg.purchaseOffline", {
+            amount: purchaseAmount.toFixed(2),
             tokens: tokenNames.join(" · "),
           }),
         );
-      } else {
-        const err = predca.lastTxError();
+      } catch (error) {
         setPurchaseMsg(
-          err
-            ? `${t("msg.purchaseFail")}: ${err}`
-            : t("msg.purchaseFail"),
+          error instanceof Error ? error.message : t("msg.purchaseError"),
         );
       }
-      return;
-    }
-
-    // Offline / disconnected mock path (localStorage).
-    if (
-      availableVaultUsdc == null ||
-      !Number.isFinite(availableVaultUsdc) ||
-      availableVaultUsdc < purchaseAmount
-    ) {
-      setPurchaseMsg(
-        connected
-          ? t("msg.predcaNotReady")
-          : t("msg.vaultLowMock", {
-              have: (availableVaultUsdc ?? 0).toFixed(2),
-              need: purchaseAmount.toFixed(2),
-            }),
-      );
-      return;
-    }
-
-    try {
-      const next = applyPurchase(
-        {
-          balances,
-          vaultUsdc: availableVaultUsdc,
-          holdings,
-          lastPurchase: lastPurchase ?? emptyPurchase(),
-        },
-        { amountUsd: purchaseAmount, tokens: tokenNames },
-      );
-      savePortfolioState(next);
-      setBalances(next.balances);
-      setVaultUsdc(next.vaultUsdc);
-      setHoldings(next.holdings);
-      setLastPurchase(next.lastPurchase);
-      setPortfolioRevision((r) => r + 1);
-      setPurchaseMsg(
-        t("msg.purchaseOffline", {
-          amount: purchaseAmount.toFixed(2),
-          tokens: tokenNames.join(" · "),
-        }),
-      );
-    } catch (error) {
-      setPurchaseMsg(
-        error instanceof Error ? error.message : t("msg.purchaseError"),
-      );
+    } finally {
+      leaveManualBuy(buyInFlightRef);
+      setBuyInFlight(false);
     }
   }
 
@@ -362,8 +373,9 @@ export function OverviewView() {
     !Number.isFinite(availableVaultUsdc) ||
     availableVaultUsdc < purchaseAmount;
   // Manual Buy must NOT disable because keeper/auto-buy phase is "buying".
-  // Only user's own txPending / missing recs / vault low / not ready.
+  // Only this click, the user's own tx, missing recs, vault low, or not ready.
   const purchaseDisabled =
+    buyInFlight ||
     top3.length === 0 ||
     predca.txPending ||
     (onChainReady
@@ -375,6 +387,8 @@ export function OverviewView() {
   /** Why Purchase stays gray — shown next to the button (vault check kept). */
   const purchaseDisabledReason: string | null = (() => {
     if (!purchaseDisabled) return null;
+    // The button label already says the buy is in flight. Do not claim vault-low.
+    if (buyInFlight) return null;
     if (predca.txPending) return t("purchase.disabled.tx");
     if (top3.length === 0) return t("purchase.disabled.noRecs");
     if (connected && !onChainReady) return t("purchase.disabled.notReady");
@@ -780,10 +794,14 @@ export function OverviewView() {
                 <button
                   type="button"
                   onClick={() => void handlePurchase()}
-                  disabled={purchaseDisabled}
+                  disabled={purchaseDisabled || predca.txPending || buyInFlight}
                   className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
                 >
-                  {predca.txPending ? t("btn.txPending") : t("btn.purchase")}
+                  {buyInFlight
+                    ? t("btn.buying")
+                    : predca.txPending
+                      ? t("btn.txPending")
+                      : t("btn.purchase")}
                 </button>
               </div>
             </div>
