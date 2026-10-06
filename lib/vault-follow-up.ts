@@ -42,6 +42,20 @@ export const UNCONFIRMED_TIMEOUT_MSG =
 export const CONFIRM_STILL_PENDING_MSG =
   "Brak potwierdzenia transakcji na Devnet.";
 
+/** Status poll after confirmLanded gives up. Then the amber note stays. */
+export const UNRESOLVED_WATCH_MS = 60_000;
+export const UNRESOLVED_WATCH_POLL_MS = 3_000;
+
+/** Amber copy: full signature and explorer URL, no second-send nudge. */
+export function pendingTxMessage(signature: string, explorerUrl: string): string {
+  return `${UNCONFIRMED_TIMEOUT_MSG} ${signature} ${explorerUrl}`;
+}
+
+/** Red copy when the signature landed with an on-chain error. */
+export function rejectedTxMessage(signature: string, explorerUrl: string): string {
+  return `Transakcja odrzucona przez Devnet. ${signature} ${explorerUrl}`;
+}
+
 function errorName(err: unknown): string {
   if (err instanceof Error) return err.name;
   if (err && typeof err === "object" && "name" in err) {

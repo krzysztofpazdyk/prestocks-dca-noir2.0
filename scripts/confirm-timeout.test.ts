@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseAnchorError } from "../lib/predca";
+import { parseAnchorError, explorerTxUrl } from "../lib/predca";
+import { isStaleBlockhashError } from "../lib/privy-blockhash";
 import {
   CONFIRM_STILL_PENDING_MSG,
   UNCONFIRMED_TIMEOUT_MSG,
+  UNRESOLVED_WATCH_MS,
+  UNRESOLVED_WATCH_POLL_MS,
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
+  pendingTxMessage,
+  rejectedTxMessage,
   textKeepingSignature,
 } from "../lib/vault-follow-up";
 
@@ -81,4 +86,41 @@ test("parseAnchorError keeps an 88-character signature", () => {
 test("parseAnchorError still truncates text that has no signature", () => {
   const msg = `nieznany blad ${"0".repeat(300)}`;
   assert.equal(parseAnchorError(new Error(msg)), `${msg.slice(0, 220)}…`);
+});
+
+test("pending notice keeps the full signature and explorer url", () => {
+  const url = explorerTxUrl(SIG);
+  const msg = pendingTxMessage(SIG, url);
+  assert.ok(msg.includes(SIG));
+  assert.ok(msg.includes(url));
+  assert.doesNotMatch(msg, /ponownie|wpłać/i);
+});
+
+test("reject notice keeps the full signature", () => {
+  const url = explorerTxUrl(SIG);
+  const msg = rejectedTxMessage(SIG, url);
+  assert.ok(msg.includes(SIG));
+  assert.ok(msg.includes(url));
+  assert.equal(isOnChainSignatureReject(new Error(msg)), true);
+});
+
+test("confirm timeout is not a stale blockhash", () => {
+  const timeout = new Error(
+    `Transaction was not confirmed in 30.00 seconds. It is unknown if it succeeded or failed. Check signature ${SIG} using the Solana Explorer or CLI tools.`,
+  );
+  timeout.name = "TransactionExpiredTimeoutError";
+  (timeout as Error & { signature: string }).signature = SIG;
+  const blockheight = new Error(
+    `Signature ${SIG} has expired: block height exceeded.`,
+  );
+  blockheight.name = "TransactionExpiredBlockheightExceededError";
+  (blockheight as Error & { signature: string }).signature = SIG;
+  assert.equal(isStaleBlockhashError(timeout), false);
+  assert.equal(isStaleBlockhashError(blockheight), false);
+});
+
+test("unresolved watch stops around 60s", () => {
+  assert.equal(UNRESOLVED_WATCH_MS, 60_000);
+  assert.equal(UNRESOLVED_WATCH_POLL_MS, 3_000);
+  assert.ok(UNRESOLVED_WATCH_MS <= 60_000);
 });

@@ -24,8 +24,10 @@ import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
+import { TxNotice, txMessageWithLink } from "@/components/TxNotice";
 import {
   clusterShortPl,
+  explorerTxUrl,
   formatUsd,
   rawToDollars,
   rpcHost,
@@ -242,7 +244,9 @@ export function OverviewView() {
   function markPendingPurchase(): boolean {
     const sig = predca.pendingSignatureNow();
     if (!sig) return false;
-    setPurchaseMsg(t("msg.purchasePending", { sig: sig.slice(0, 8) }));
+    setPurchaseMsg(
+      t("msg.purchasePending", { sig, url: explorerTxUrl(sig) }),
+    );
     setPurchaseTone("pending");
     return true;
   }
@@ -692,10 +696,11 @@ export function OverviewView() {
           </p>
         )}
 
+        {predca.pendingMsg && (
+          <TxNotice message={predca.pendingMsg} tone="pending" className="mt-3" />
+        )}
         {predca.error && (
-          <p className="mt-3 rounded border border-[#f8717133] bg-[#f8717111] px-3 py-2 text-xs text-[#fca5a5]">
-            {predca.error}
-          </p>
+          <TxNotice message={predca.error} tone="error" className="mt-3" />
         )}
         {predca.okMsg && (
           <p className="mt-3 rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
@@ -881,7 +886,7 @@ export function OverviewView() {
             )}
             {purchaseMsg && (
               <p
-                className={`mt-3 rounded border px-3 py-2 text-xs ${
+                className={`mt-3 break-all rounded border px-3 py-2 text-xs ${
                   purchaseTone === "pending"
                     ? "border-[#fbbf2433] bg-[#fbbf2411] text-[#fbbf24]"
                     : /nieudany|failed|Could not|Nie udało/i.test(purchaseMsg)
@@ -889,7 +894,7 @@ export function OverviewView() {
                       : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
                 }`}
               >
-                {purchaseMsg}
+                {txMessageWithLink(purchaseMsg)}
               </p>
             )}
           </section>

@@ -27,10 +27,13 @@ import {
   CONFIRMED_VAULT_LAG_MSG,
   CONFIRM_STILL_PENDING_MSG,
   POST_CONFIRM_VAULT_POLL_MS,
-  UNCONFIRMED_TIMEOUT_MSG,
+  UNRESOLVED_WATCH_MS,
+  UNRESOLVED_WATCH_POLL_MS,
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
   outcomeAfterVaultCheck,
+  pendingTxMessage,
+  rejectedTxMessage,
 } from "@/lib/vault-follow-up";
 import { Transaction, type PublicKey } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
@@ -180,11 +183,17 @@ function usePredcaImpl() {
   /** Signature broadcast, not yet confirmed or rejected. Keeps Deposit/Kup disabled. */
   const pendingSigRef = useRef<string | null>(null);
   const [pendingSignature, setPendingSignatureState] = useState<string | null>(null);
+  const [pendingMsg, setPendingMsg] = useState<string | null>(null);
   const watchingSigRef = useRef<string | null>(null);
   const ownerRef = useRef<PublicKey | null>(null);
-  function setPendingSignature(signature: string | null) {
+  /** Previous wallet. Undefined until the first effect, so mount does not clear. */
+  const seenOwnerKey = useRef<string | null | undefined>(undefined);
+  function setPending(signature: string | null) {
     pendingSigRef.current = signature;
     setPendingSignatureState(signature);
+    setPendingMsg(
+      signature ? pendingTxMessage(signature, explorerTxUrl(signature)) : null,
+    );
   }
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
@@ -212,13 +221,14 @@ function usePredcaImpl() {
 
   const owner = wallet?.publicKey ?? null;
   ownerRef.current = owner;
+  const ownerKey = owner?.toBase58() ?? null;
 
   useEffect(() => {
-    if (owner) return;
-    if (!pendingSigRef.current) return;
-    pendingSigRef.current = null;
-    setPendingSignatureState(null);
-  }, [owner]);
+    const prev = seenOwnerKey.current;
+    seenOwnerKey.current = ownerKey;
+    if (prev === undefined || prev === ownerKey) return;
+    setPending(null);
+  }, [ownerKey]);
 
   const refresh = useCallback(async () => {
     reportError(null);
@@ -343,7 +353,7 @@ function usePredcaImpl() {
       const { value } = await connection.getSignatureStatuses([signature]);
       const row = value[0];
       if (row?.err) {
-        throw new Error("Transakcja odrzucona przez Devnet.");
+        throw new Error(rejectedTxMessage(signature, explorerTxUrl(signature)));
       }
       if (
         row?.confirmationStatus === "confirmed" ||
@@ -431,9 +441,8 @@ function usePredcaImpl() {
   }
 
   /**
-   * Keeps Deposit/Kup disabled until this signature confirms or is rejected.
-   * A later tx (withdraw is still enabled) bumps the epoch; keep polling, but
-   * do not overwrite that newer toast.
+   * Poll a still-unknown signature for about 60s. On confirm or on-chain
+   * reject, clear the amber note. When the budget ends, leave the note.
    */
   function watchUnresolved(follow: {
     epoch: number;
@@ -445,12 +454,20 @@ function usePredcaImpl() {
     if (watchingSigRef.current === follow.signature) return;
     watchingSigRef.current = follow.signature;
     void (async () => {
+      const started = Date.now();
       try {
         while (pendingSigRef.current === follow.signature) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const elapsed = Date.now() - started;
+          if (elapsed >= UNRESOLVED_WATCH_MS) return;
+          const wait = Math.min(
+            UNRESOLVED_WATCH_POLL_MS,
+            UNRESOLVED_WATCH_MS - elapsed,
+          );
+          await new Promise((resolve) => setTimeout(resolve, wait));
           if (pendingSigRef.current !== follow.signature) return;
+          if (Date.now() - started >= UNRESOLVED_WATCH_MS) return;
           if (!ownerRef.current) {
-            setPendingSignature(null);
+            setPending(null);
             return;
           }
           let row: Awaited<
@@ -466,10 +483,12 @@ function usePredcaImpl() {
           }
           if (row?.err) {
             if (pendingSigRef.current !== follow.signature) return;
-            setPendingSignature(null);
+            setPending(null);
             if (vaultFollowEpoch.current !== follow.epoch) return;
             setOkMsg(null);
-            reportError("Transakcja odrzucona przez Devnet.");
+            reportError(
+              rejectedTxMessage(follow.signature, explorerTxUrl(follow.signature)),
+            );
             return;
           }
           if (
@@ -477,7 +496,7 @@ function usePredcaImpl() {
             row?.confirmationStatus === "finalized"
           ) {
             if (pendingSigRef.current !== follow.signature) return;
-            setPendingSignature(null);
+            setPending(null);
             if (vaultFollowEpoch.current !== follow.epoch) return;
             if (follow.requireVaultIncrease && ownerRef.current) {
               await applyConfirmedVault(
@@ -511,6 +530,7 @@ function usePredcaImpl() {
     const epoch = ++vaultFollowEpoch.current;
     reportError(null);
     setOkMsg(null);
+    setPending(null);
     setTxPending(true);
     const vaultBefore =
       opts?.requireVaultIncrease && owner
@@ -535,33 +555,45 @@ function usePredcaImpl() {
       await refresh();
       return result;
     } catch (e) {
+      if (isOnChainSignatureReject(e)) {
+        setPending(null);
+        if (vaultFollowEpoch.current === epoch) {
+          setOkMsg(null);
+          reportError(
+            e instanceof Error
+              ? e.message
+              : "Transakcja odrzucona przez Devnet.",
+          );
+        }
+        return null;
+      }
       const pending = isUnconfirmedTimeout(e);
       if (!pending) {
         reportError(parseAnchorError(e));
         return null;
       }
       const signature = pending.signature;
-      setPendingSignature(signature);
+      setPending(signature);
       if (vaultFollowEpoch.current === epoch) {
         reportError(null);
-        setOkMsg(`${UNCONFIRMED_TIMEOUT_MSG} ${explorerTxUrl(signature)}`);
+        setOkMsg(null);
       }
       try {
         await confirmLanded(signature);
       } catch (confirmErr) {
         if (isOnChainSignatureReject(confirmErr)) {
-          setPendingSignature(null);
+          setPending(null);
           if (vaultFollowEpoch.current === epoch) {
             setOkMsg(null);
             reportError(
               confirmErr instanceof Error
                 ? confirmErr.message
-                : "Transakcja odrzucona przez Devnet.",
+                : rejectedTxMessage(signature, explorerTxUrl(signature)),
             );
           }
           return null;
         }
-        // Still unknown. Leave Deposit/Kup disabled until the signature settles.
+        // Still unknown. Amber note stays; the watcher stops after its budget.
         watchUnresolved({
           epoch,
           signature,
@@ -571,7 +603,7 @@ function usePredcaImpl() {
         });
         return null;
       }
-      setPendingSignature(null);
+      setPending(null);
       if (opts?.requireVaultIncrease && owner) {
         const settled = await applyConfirmedVault(
           epoch,
@@ -881,6 +913,7 @@ function usePredcaImpl() {
   function clearMessages() {
     reportError(null);
     setOkMsg(null);
+    setPending(null);
   }
 
   return {
@@ -892,6 +925,8 @@ function usePredcaImpl() {
     txPending,
     /** Set while a broadcast signature is neither confirmed nor rejected. */
     pendingSignature,
+    /** Amber copy for pendingSignature. Not the teal success toast. */
+    pendingMsg,
     pendingSignatureNow: () => pendingSigRef.current,
     error,
     /** Immediate last tx/validation error after await (ref). */

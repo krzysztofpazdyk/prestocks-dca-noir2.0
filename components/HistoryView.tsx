@@ -3,6 +3,7 @@
 import { useWallet } from "@solana/wallet-adapter-react";
 import { nameByMint } from "@/lib/devnet-mock-mints";
 import { usePredca } from "@/lib/hooks/usePredca";
+import { TxNotice } from "@/components/TxNotice";
 import {
   clusterShortPl,
   formatTs,
@@ -59,11 +60,7 @@ export function HistoryView() {
         <p className="mt-1 text-xs text-[#8b95a8]">{intro}</p>
       </div>
 
-      {predca.error && (
-        <p className="rounded border border-[#f8717133] bg-[#f8717111] px-3 py-2 text-xs text-[#fca5a5]">
-          {predca.error}
-        </p>
-      )}
+      {predca.error && <TxNotice message={predca.error} tone="error" />}
 
       {!connected && (
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
