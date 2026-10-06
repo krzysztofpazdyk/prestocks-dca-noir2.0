@@ -15,7 +15,7 @@ import { AnchorProvider } from "@coral-xyz/anchor";
 import { useConnection, useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
 import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
 import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
-import { isStaleBlockhashError } from "@/lib/privy-blockhash";
+import { withOneStaleBlockhashRetry } from "@/lib/privy-blockhash";
 import { Transaction } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
@@ -405,35 +405,39 @@ function usePredcaImpl() {
         );
         return null;
       }
-      return withTx(async () => {
-        const initIx = await program.methods
-          .initializeUser(budgetRaw)
-          .accounts({ usdcMint: mint })
-          .instruction();
-        const depositIx = await program.methods
-          .depositUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .instruction();
-        const tx = new Transaction().add(initIx, depositIx);
-        return provider.sendAndConfirm(tx);
-      },
-      `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
-      { requireVaultIncrease: isPrivy },
-    );
+      return withTx(
+        () =>
+          withOneStaleBlockhashRetry(isPrivy, async () => {
+            const initIx = await program.methods
+              .initializeUser(budgetRaw)
+              .accounts({ usdcMint: mint })
+              .instruction();
+            const depositIx = await program.methods
+              .depositUsdc(raw)
+              .accounts({
+                usdcMint: mint,
+                ownerUsdc: ownerUsdcAtaPk,
+              })
+              .instruction();
+            const tx = new Transaction().add(initIx, depositIx);
+            return provider.sendAndConfirm(tx);
+          }),
+        `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
+        { requireVaultIncrease: isPrivy },
+      );
     }
 
     return withTx(
       () =>
-        program.methods
-          .depositUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .rpc(),
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods
+            .depositUsdc(raw)
+            .accounts({
+              usdcMint: mint,
+              ownerUsdc: ownerUsdcAtaPk,
+            })
+            .rpc(),
+        ),
       `Wpłacono ${amountUsd} USDC do vault.`,
       { requireVaultIncrease: isPrivy },
     );
@@ -462,13 +466,15 @@ function usePredcaImpl() {
     const ownerUsdcAtaPk = ownerUsdcAta(owner, mint);
     return withTx(
       () =>
-        program.methods
-          .withdrawUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .rpc(),
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods
+            .withdrawUsdc(raw)
+            .accounts({
+              usdcMint: mint,
+              ownerUsdc: ownerUsdcAtaPk,
+            })
+            .rpc(),
+        ),
       `Wypłacono ${amountUsd} USDC z vault.`,
     );
   }
@@ -492,7 +498,10 @@ function usePredcaImpl() {
       return null;
     }
     return withTx(
-      () => program.methods.setWeeklyBudget(raw).rpc(),
+      () =>
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods.setWeeklyBudget(raw).rpc(),
+        ),
       "Zapisano budżet tygodniowy on-chain.",
     );
   }
@@ -599,16 +608,8 @@ function usePredcaImpl() {
         .rpc();
     };
 
-    const submitOnce = async (runIndex: number) => {
-      try {
-        return await submitAt(runIndex);
-      } catch (e) {
-        // Slow Privy approval can expire the blockhash. One rebuild + re-prompt.
-        // Phantom and Solflare keep the single attempt.
-        if (!isPrivy || !isStaleBlockhashError(e)) throw e;
-        return await submitAt(runIndex);
-      }
-    };
+    const submitOnce = (runIndex: number) =>
+      withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
 
     return withTx(async () => {
       try {
