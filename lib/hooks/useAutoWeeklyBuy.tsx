@@ -28,15 +28,21 @@ import { DEFAULT_SETTINGS, type JevRank } from "@/lib/mock-data";
 import {
   AUTO_BUY_TICK_MS,
   BANNER_HOLD_MS,
+  ENABLE_PENDING_POLL_MS,
   WEEK_MS,
+  canCommitEnabledFromStatus,
   cleanupOwnerForFailedCycle,
   isBannerHoldActive,
+  resolvePendingEnable,
+  pendingEnableStillFor,
   shouldCommitAutoBuyEnabled,
+  shouldSendEnable,
   formatWarsawWhen,
   writeAutoBuyMeta,
   writeAutoWeeklyBuy,
   writeWeeklyBudgetUsd,
   type AutoBuyBlockReason,
+  type EnableStatusBaseline,
 } from "@/lib/auto-weekly-buy";
 import { useI18n } from "@/lib/i18n";
 import { usePredca } from "@/lib/hooks/usePredca";
@@ -46,6 +52,7 @@ export type AutoBuyPhase =
   | "idle"
   | "ranking"
   | "buying"
+  | "pending"
   | "ok"
   | "error"
   | "blocked";
@@ -126,6 +133,10 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   const bannerHoldUntilRef = useRef(0);
   /** Last pubkey this effect observed. Null until the first run. */
   const prevOwnerRef = useRef<string | null>(null);
+  /** /enable timed out. Tick must not replace this banner or turn the toggle off. */
+  const enablePendingRef = useRef(false);
+  const enablePendingOwnerRef = useRef<string | null>(null);
+  const enableBaselineRef = useRef<EnableStatusBaseline | null>(null);
 
   const ownerKey = publicKey?.toBase58() ?? null;
   const signReady = typeof signMessage === "function";
@@ -151,6 +162,9 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     statusEpochRef.current += 1;
     seenKeeperRunRef.current = null;
     bannerHoldUntilRef.current = 0;
+    enablePendingRef.current = false;
+    enablePendingOwnerRef.current = null;
+    enableBaselineRef.current = null;
     // Drop the previous owner's On immediately. Status below corrects it.
     resetBannerState();
     setPrefsReady(false);
@@ -243,7 +257,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       setMessage(tRef.current("auto.status.needWallet"));
       return;
     }
-    if (cycleInFlight) return;
+    if (!shouldSendEnable(cycleInFlight)) return;
     cycleInFlight = true;
     const epoch = statusEpochRef.current;
     const stillCurrent = () => statusEpochRef.current === epoch;
@@ -317,6 +331,54 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         cycleOwner,
       );
       if (!stillCurrent()) return;
+      const prior = await keeperStatus(cycleOwner, sign);
+      if (!stillCurrent()) return;
+      const baseline: EnableStatusBaseline = {
+        error: prior.error ?? null,
+        phase: prior.phase ?? null,
+      };
+      const commitPurchase = (ran: KeeperRunResult) => {
+        enablePendingRef.current = false;
+        enablePendingOwnerRef.current = null;
+        enableBaselineRef.current = null;
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setEnabledState(true);
+        writeAutoWeeklyBuy(true, cycleOwner);
+        if (ran.names && ran.names.length > 0) {
+          setLastTop3(ran.names.map((name) => ({ name, score: 0 })));
+        }
+        writeAutoBuyMeta(
+          {
+            lastAttemptMs: Date.now(),
+            lastSuccessMs: Date.now(),
+            lastError: null,
+            cycleStartedAtMs: Date.now(),
+            cycleBudgetUsd: amount,
+          },
+          cycleOwner,
+        );
+        setPhase("ok");
+        setDue(false);
+        setBlockReason(null);
+        seenKeeperRunRef.current = keeperRunMarker(ran);
+        void predcaRef.current.refresh();
+        const nextBuyMs = keeperNextBuyAtMs(ran) ?? Date.now() + WEEK_MS;
+        setNextAt(nextBuyMs);
+        const amountLabel = (ran.amountUsd ?? amount).toFixed(2);
+        const tokensLabel = (ran.names ?? []).join(" · ");
+        setMessage(
+          tRef.current("auto.status.okWithNext", {
+            amount: amountLabel,
+            tokens: tokensLabel,
+            nextBuy: formatWarsawWhen(nextBuyMs, localeRef.current),
+          }),
+        );
+      };
+      // Already On with a finished purchase: do not POST /enable again.
+      if (canCommitEnabledFromStatus(prior, cycleOwner)) {
+        commitPurchase(prior);
+        return;
+      }
       setPhase("buying");
       setMessage(tRef.current("auto.status.buyingKeeper"));
       // One signature: daemon syncs prefs on enable.
@@ -327,6 +389,69 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         rankPrefsForApi(readRankPrefs()),
       );
       if (!stillCurrent()) return;
+      // Daemon writes Off itself when enable fails. Do not ask for a second signature.
+      const forceOff = async (reason: string) => {
+        enablePendingRef.current = false;
+        enablePendingOwnerRef.current = null;
+        const cleanupOwner = cleanupOwnerForFailedCycle(
+          cycleOwner,
+          epoch,
+          statusEpochRef.current,
+        );
+        if (!cleanupOwner) return;
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setEnabledState(false);
+        writeAutoWeeklyBuy(false, cleanupOwner);
+        if (statusEpochRef.current !== epoch) return;
+        setPhase("error");
+        const vaultish = /vault|USDC|za mało|Za mało|vault_low/i.test(reason);
+        setMessage(
+          vaultish
+            ? tRef.current("auto.status.vaultLow", {
+                have: "?",
+                need: amount.toFixed(2),
+              })
+            : tRef.current("auto.status.error", { reason }),
+        );
+      };
+      if (ran.pending || ran.error === "enable_timeout") {
+        enablePendingRef.current = true;
+        enablePendingOwnerRef.current = cycleOwner;
+        enableBaselineRef.current = baseline;
+        setPhase("pending");
+        setBlockReason(null);
+        setMessage(tRef.current("auto.status.enablePending"));
+        const started = Date.now();
+        while (stillCurrent()) {
+          const st = await keeperStatus(cycleOwner, sign);
+          if (!stillCurrent()) return;
+          const verdict = resolvePendingEnable(
+            st,
+            cycleOwner,
+            Date.now() - started,
+            baseline,
+          );
+          if (verdict === "pending") {
+            await new Promise((resolve) =>
+              setTimeout(resolve, ENABLE_PENDING_POLL_MS),
+            );
+            continue;
+          }
+          if (verdict === "on") {
+            commitPurchase(st);
+            return;
+          }
+          if (verdict === "off") {
+            await forceOff(st.error || "enable_failed");
+            return;
+          }
+          setPhase("pending");
+          setMessage(tRef.current("auto.status.enableUnknown"));
+          enablePendingRef.current = true;
+          return;
+        }
+        return;
+      }
       if (!ran.ok) {
         const err = ran.error || tRef.current("auto.status.keeperDown");
         if (
@@ -342,35 +467,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       }
       // Do not commit On here. Busy (ok + skipped) must leave the toggle Off.
       // Enabled is written only after shouldCommitAutoBuyEnabled.
-      const forceOff = async (reason: string) => {
-        // Epoch moves in the wallet effect, after ownerRef already points at
-        // the new pubkey. Bail before any disable so it cannot follow the ref.
-        const cleanupOwner = cleanupOwnerForFailedCycle(
-          cycleOwner,
-          epoch,
-          statusEpochRef.current,
-        );
-        if (!cleanupOwner) return;
-        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
-        setEnabledState(false);
-        writeAutoWeeklyBuy(false, cleanupOwner);
-        try {
-          if (sign) await keeperDisable(cleanupOwner, sign);
-        } catch {
-          /* best-effort */
-        }
-        if (statusEpochRef.current !== epoch) return;
-        setPhase("error");
-        const vaultish = /vault|USDC|za mało|Za mało|vault_low/i.test(reason);
-        setMessage(
-          vaultish
-            ? tRef.current("auto.status.vaultLow", {
-                have: "?",
-                need: amount.toFixed(2),
-              })
-            : tRef.current("auto.status.error", { reason }),
-        );
-      };
       if (ran.skipped && ran.reason === "busy") {
         // Daemon already left enabled false. Roll the toggle back and do not
         // ask for a disable signature — the user can retry the same enable.
@@ -395,40 +491,10 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         await forceOff(err);
         return;
       }
-      // Real purchase succeeded — only now commit enabled (UI + local cache).
-      // Hold the OK banner across the tick that `enabled` immediately retriggers.
-      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
-      setEnabledState(true);
-      writeAutoWeeklyBuy(true, cycleOwner);
-      setLastTop3(ran.names.map((name) => ({ name, score: 0 })));
-      writeAutoBuyMeta(
-        {
-          lastAttemptMs: Date.now(),
-          lastSuccessMs: Date.now(),
-          lastError: null,
-          cycleStartedAtMs: Date.now(),
-          cycleBudgetUsd: amount,
-        },
-        cycleOwner,
-      );
-      setPhase("ok");
-      setDue(false);
-      seenKeeperRunRef.current = keeperRunMarker(ran);
-      void predcaRef.current.refresh();
-      // A just-completed enable buy is the anchor; do not reuse a stale
-      // pre-enable on-chain RunRecord while the keeper status catches up.
-      const nextBuyMs = keeperNextBuyAtMs(ran) ?? Date.now() + WEEK_MS;
-      setNextAt(nextBuyMs);
-      const amountLabel = (ran.amountUsd ?? amount).toFixed(2);
-      const tokensLabel = (ran.names ?? []).join(" · ");
-      setMessage(
-        tRef.current("auto.status.okWithNext", {
-          amount: amountLabel,
-          tokens: tokensLabel,
-          nextBuy: formatWarsawWhen(nextBuyMs, localeRef.current),
-        }),
-      );
+      commitPurchase(ran);
     } catch (e) {
+      enablePendingRef.current = false;
+      enablePendingOwnerRef.current = null;
       const cleanupOwner = cleanupOwnerForFailedCycle(
         cycleOwner,
         epoch,
@@ -439,11 +505,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
       setEnabledState(false);
       writeAutoWeeklyBuy(false, cleanupOwner);
-      try {
-        if (sign) await keeperDisable(cleanupOwner, sign);
-      } catch {
-        /* best-effort */
-      }
       if (statusEpochRef.current !== epoch) return;
       setPhase("error");
       const vaultish = /vault|USDC|za mało|Za mało|vault_low/i.test(reason);
@@ -456,8 +517,9 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
           : tRef.current("auto.status.error", { reason }),
       );
     } finally {
-      if (stillCurrent()) cycleInFlight = false;
-      else cycleInFlight = false;
+      // A wallet switch already cleared the lock. An unresolved enable keeps it
+      // so Confirm cannot POST /enable again.
+      if (stillCurrent() && !enablePendingRef.current) cycleInFlight = false;
     }
   }, []);
 
@@ -475,6 +537,60 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
     }
     if (st.mode === "live" || st.mode === "dry-run") {
       setKeeperMode(st.mode);
+    }
+    if (enablePendingRef.current) {
+      if (!wallet || !pendingEnableStillFor(enablePendingOwnerRef.current, wallet)) {
+        return;
+      }
+      const verdict = resolvePendingEnable(
+        st,
+        wallet,
+        0,
+        enableBaselineRef.current ?? undefined,
+      );
+      if (verdict === "on") {
+        enablePendingRef.current = false;
+        enablePendingOwnerRef.current = null;
+        enableBaselineRef.current = null;
+        cycleInFlight = false;
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setEnabledState(true);
+        writeAutoWeeklyBuy(true, wallet);
+        if (st.names && st.names.length > 0) {
+          setLastTop3(st.names.map((name) => ({ name, score: 0 })));
+        }
+        setPhase("ok");
+        setDue(false);
+        setBlockReason(null);
+        const nextBuyMs = keeperNextBuyAtMs(st) ?? Date.now() + WEEK_MS;
+        setNextAt(nextBuyMs);
+        if (st.amountUsd != null && st.names) {
+          setMessage(
+            tRef.current("auto.status.okWithNext", {
+              amount: st.amountUsd.toFixed(2),
+              tokens: st.names.join(" · "),
+              nextBuy: formatWarsawWhen(nextBuyMs, localeRef.current),
+            }),
+          );
+        }
+        void predcaRef.current.refresh();
+      } else if (verdict === "off") {
+        enablePendingRef.current = false;
+        enablePendingOwnerRef.current = null;
+        enableBaselineRef.current = null;
+        cycleInFlight = false;
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setEnabledState(false);
+        writeAutoWeeklyBuy(false, wallet);
+        setPhase("error");
+        setBlockReason(null);
+        setMessage(
+          tRef.current("auto.status.error", {
+            reason: st.error || "enable_failed",
+          }),
+        );
+      }
+      return;
     }
     // Toggle follows keeper for this owner. A stale Off during the banner hold
     // must not clobber a just-confirmed enable. Unknown status must not force Off.
@@ -637,6 +753,7 @@ export function AutoWeeklyBuyBanner() {
   const showBanner =
     value.phase === "ranking" ||
     value.phase === "buying" ||
+    value.phase === "pending" ||
     value.phase === "error" ||
     (value.phase === "ok" && value.message != null);
   if (!showBanner || !value.message) return null;
@@ -646,7 +763,9 @@ export function AutoWeeklyBuyBanner() {
       className={`border-b px-4 py-2 text-center text-xs ${
         value.phase === "error"
           ? "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]"
-          : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
+          : value.phase === "pending"
+            ? "border-[#fbbf2433] bg-[#fbbf2411] text-[#fbbf24]"
+            : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
       }`}
     >
       {value.phase === "ranking"

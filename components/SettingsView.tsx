@@ -533,7 +533,9 @@ export function SettingsView() {
               className={`mt-2 text-[10px] ${
                 autoBuy.phase === "error"
                   ? "text-[#fca5a5]"
-                  : "text-[#8b95a8]"
+                  : autoBuy.phase === "pending"
+                    ? "text-[#fbbf24]"
+                    : "text-[#8b95a8]"
               }`}
             >
               {autoBuy.message}
