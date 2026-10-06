@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLogin, usePrivy } from "@privy-io/react-auth";
 import {
   WalletReadyState,
@@ -9,7 +10,12 @@ import {
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useI18n } from "@/lib/i18n";
 import { shortPk } from "@/lib/predca";
-import { nextConnectStep } from "@/lib/connect-wallet";
+import {
+  adapterHasAccount,
+  CONNECT_PROMPT_MS,
+  ConnectTimeoutError,
+  runConnectJob,
+} from "@/lib/connect-wallet";
 import { privyAppId } from "@/lib/privy-devnet";
 import {
   PRIVY_WALLET_ICON,
@@ -22,24 +28,23 @@ const SOLFLARE = "Solflare";
 type Job = {
   id: number;
   target: string;
-  phase: "disconnect" | "select" | "connect";
 };
 
 function connectFailureMessage(
   err: unknown,
   t: (key: string) => string,
 ): string {
-  if (err instanceof Error && err.message) return err.message;
+  if (err instanceof ConnectTimeoutError) return t("connect.timeout");
   if (err instanceof Error && err.name === "WalletNotReadyError") {
     return t("connect.notReady");
   }
+  if (err instanceof Error && err.message) return err.message;
   return t("connect.failed");
 }
 
 function useConnectJob() {
   const { t } = useI18n();
   const tRef = useRef(t);
-  tRef.current = t;
   const {
     wallets,
     wallet,
@@ -54,135 +59,123 @@ function useConnectJob() {
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const disconnectStarted = useRef(0);
-  const connectStarted = useRef(0);
-  const selectStamp = useRef("");
   const walletRef = useRef(wallet);
-  walletRef.current = wallet;
+  const walletsRef = useRef(wallets);
   const connectedRef = useRef(connected);
-  connectedRef.current = connected;
+  const connectingRef = useRef(connecting);
+  const disconnectingRef = useRef(disconnecting);
   const jobRef = useRef(job);
-  jobRef.current = job;
+  const selectRef = useRef(select);
+  const connectRef = useRef(connect);
 
-  const requestConnect = useCallback(
-    (target: string) => {
-      setError(null);
-      if (
-        connectedRef.current &&
-        walletRef.current?.adapter.name === target
-      ) {
-        setBusy(false);
-        setJob(null);
-        return;
-      }
-      const current = walletRef.current;
-      const id = Date.now() + Math.floor(Math.random() * 1000);
-      disconnectStarted.current = 0;
-      connectStarted.current = 0;
-      selectStamp.current = "";
-      const needsDisconnect =
-        connectedRef.current ||
-        (current != null && current.adapter.name !== target);
-      setBusy(true);
-      setJob({
-        id,
-        target,
-        phase: needsDisconnect ? "disconnect" : "select",
-      });
-    },
-    [],
-  );
+  useEffect(() => {
+    tRef.current = t;
+    walletRef.current = wallet;
+    walletsRef.current = wallets;
+    connectedRef.current = connected;
+    connectingRef.current = connecting;
+    disconnectingRef.current = disconnecting;
+    jobRef.current = job;
+    selectRef.current = select;
+    connectRef.current = connect;
+  });
+
+  const fail = useCallback((message: string) => {
+    setJob(null);
+    setBusy(false);
+    setError(message);
+  }, []);
+
+  const requestConnect = useCallback((target: string) => {
+    setError(null);
+    if (connectedRef.current && walletRef.current?.adapter.name === target) {
+      setBusy(false);
+      setJob(null);
+      return;
+    }
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setBusy(true);
+    setJob({ id, target });
+  }, []);
 
   const cancel = useCallback(() => {
     setJob(null);
     setBusy(false);
     setError(null);
-    connectStarted.current = 0;
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
   useEffect(() => {
     if (!job) return;
-    const selectedName = wallet?.adapter.name ?? null;
-    const targetReady = wallets.some((item) => item.adapter.name === job.target);
-    const step = nextConnectStep({
-      phase: job.phase,
-      target: job.target,
-      selectedName,
-      connected,
-      connecting,
-      disconnecting,
-      targetReady,
-    });
+    const jobId = job.id;
+    const target = job.target;
+    let cancelled = false;
 
-    if (step === "done") {
-      setJob(null);
-      setBusy(false);
-      return;
-    }
-
-    if (step === "wait") {
-      if (job.phase === "disconnect" && disconnectStarted.current !== job.id) {
-        disconnectStarted.current = job.id;
-        const jobId = job.id;
-        const target = job.target;
-        void (async () => {
-          try {
-            await disconnect();
-          } catch {
-            /* already disconnected */
-          }
-          // If the name is still the previous wallet and it is no longer
-          // connected, drop it. A connected adapter must not be select(null)'d
-          // here — that disconnects without waiting and can wipe the next name.
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          if (jobRef.current?.id !== jobId) return;
-          const current = walletRef.current;
-          if (
-            current &&
-            current.adapter.name !== target &&
-            !connectedRef.current
-          ) {
-            select(null);
-          }
-        })();
+    // Backstop for a connect() promise that never settles (wallet popup or
+    // a stuck adapter). The runner itself times out the steps that do return.
+    const watchdog = window.setTimeout(() => {
+      if (cancelled || jobRef.current?.id !== jobId) return;
+      if (
+        connectedRef.current &&
+        walletRef.current?.adapter.name === target
+      ) {
+        return;
       }
-      return;
-    }
+      cancelled = true;
+      fail(tRef.current("connect.timeout"));
+    }, CONNECT_PROMPT_MS);
 
-    if (step === "select") {
-      if (!targetReady) return;
-      const stamp = `${job.id}:${selectedName ?? ""}`;
-      if (selectStamp.current === stamp) return;
-      selectStamp.current = stamp;
-      if (job.phase !== "select") setJob({ ...job, phase: "select" });
-      select(job.target as WalletName);
-      return;
-    }
+    void runConnectJob({
+      target,
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      isCancelled: () => cancelled || jobRef.current?.id !== jobId,
+      getState: () => {
+        const selectedName = walletRef.current?.adapter.name ?? null;
+        const listed = walletsRef.current.find(
+          (item) => item.adapter.name === target,
+        );
+        const targetReady =
+          target === PRIVY_WALLET_NAME
+            ? adapterHasAccount(listed?.adapter)
+            : Boolean(listed);
+        return {
+          selectedName,
+          connected: connectedRef.current,
+          connecting: connectingRef.current,
+          disconnecting: disconnectingRef.current,
+          targetReady,
+        };
+      },
+      disconnectAdapter: async () => {
+        const adapter = walletRef.current?.adapter;
+        if (!adapter || adapter.name === target) return;
+        await Promise.race([
+          adapter.disconnect().catch(() => undefined),
+          new Promise((resolve) => setTimeout(resolve, 2000)),
+        ]);
+      },
+      select: (name) => {
+        selectRef.current(name == null ? null : (name as WalletName));
+      },
+      connect: () => connectRef.current(),
+    })
+      .then(() => {
+        if (cancelled || jobRef.current?.id !== jobId) return;
+        setJob(null);
+        setBusy(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled || jobRef.current?.id !== jobId) return;
+        fail(connectFailureMessage(err, tRef.current));
+      });
 
-    selectStamp.current = "";
-    if (selectedName !== job.target || connecting || disconnecting) return;
-    if (connectStarted.current === job.id) return;
-    connectStarted.current = job.id;
-    if (job.phase !== "connect") setJob({ ...job, phase: "connect" });
-    void connect().catch((err: unknown) => {
-      connectStarted.current = 0;
-      setJob(null);
-      setBusy(false);
-      setError(connectFailureMessage(err, tRef.current));
-    });
-  }, [
-    job,
-    wallet,
-    wallets,
-    connected,
-    connecting,
-    disconnecting,
-    select,
-    connect,
-    disconnect,
-  ]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(watchdog);
+    };
+  }, [job, fail]);
 
   return {
     wallets,
@@ -196,6 +189,7 @@ function useConnectJob() {
     cancel,
     disconnect,
     clearError,
+    fail,
   };
 }
 
@@ -242,13 +236,21 @@ type PrivyUi = {
 };
 
 function PrivyConnect() {
+  const { t } = useI18n();
+  const tRef = useRef(t);
   const job = useConnectJob();
   const { ready, authenticated, logout } = usePrivy();
   const wantPrivy = useRef(false);
   const requestRef = useRef(job.requestConnect);
-  requestRef.current = job.requestConnect;
   const cancelRef = useRef(job.cancel);
-  cancelRef.current = job.cancel;
+  const failRef = useRef(job.fail);
+
+  useEffect(() => {
+    tRef.current = t;
+    requestRef.current = job.requestConnect;
+    cancelRef.current = job.cancel;
+    failRef.current = job.fail;
+  });
 
   const loginCallbacks = useMemo(
     () => ({
@@ -257,9 +259,14 @@ function PrivyConnect() {
         wantPrivy.current = false;
         requestRef.current(PRIVY_WALLET_NAME);
       },
-      onError: () => {
+      onError: (code: string) => {
         wantPrivy.current = false;
-        cancelRef.current();
+        // Closing the Privy dialog is not a failed connect.
+        if (code === "exited_auth_flow") {
+          cancelRef.current();
+          return;
+        }
+        failRef.current(tRef.current("connect.failed"));
       },
     }),
     [],
@@ -267,7 +274,10 @@ function PrivyConnect() {
   const { login } = useLogin(loginCallbacks);
 
   const onPick = useCallback((): "login" | "connect" => {
-    if (!ready) return "login";
+    if (!ready) {
+      job.fail(t("connect.notReady"));
+      return "connect";
+    }
     job.clearError();
     if (authenticated) {
       wantPrivy.current = false;
@@ -277,7 +287,7 @@ function PrivyConnect() {
     wantPrivy.current = true;
     login();
     return "login";
-  }, [authenticated, job, login, ready]);
+  }, [authenticated, job, login, ready, t]);
 
   const onLogout = useCallback(async () => {
     wantPrivy.current = false;
@@ -410,77 +420,110 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
         </div>
       ) : null}
 
-      {pickerOpen ? (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0c0e12cc] px-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="connect-wallet-title"
-          onClick={() => {
-            setPickerOpen(false);
-            if (!job.connecting) job.cancel();
-          }}
-        >
-          <div
-            className="w-full max-w-sm rounded-lg border border-[#2dd4bf44] bg-[#141820] p-5 shadow-[0_0_40px_#2dd4bf22]"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h2
-              id="connect-wallet-title"
-              className="text-sm font-semibold text-[#e8eef5]"
+      {pickerOpen
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[200] overflow-y-auto bg-[#0c0e12cc]"
+              onClick={() => {
+                setPickerOpen(false);
+                if (!job.connecting) job.cancel();
+              }}
             >
-              {t("connect.title")}
-            </h2>
-            <div className="mt-4 flex flex-col gap-2">
-              <WalletRow
-                name={PHANTOM}
-                icon={phantom?.adapter.icon}
-                hint={
-                  isDetected(phantom?.readyState)
-                    ? t("connect.detected")
-                    : t("connect.notDetected")
-                }
-                testId="connect-option-phantom"
-                onClick={() => choose(PHANTOM)}
-              />
-              <WalletRow
-                name={SOLFLARE}
-                icon={solflare?.adapter.icon}
-                hint={
-                  isDetected(solflare?.readyState)
-                    ? t("connect.detected")
-                    : t("connect.notDetected")
-                }
-                testId="connect-option-solflare"
-                onClick={() => choose(SOLFLARE)}
-              />
-              {privy ? (
-                <WalletRow
-                  name={t("connect.privy")}
-                  icon={privyAdapter?.adapter.icon || PRIVY_WALLET_ICON}
-                  hint={privy.ready ? t("connect.privyHint") : t("privy.busy")}
-                  disabled={!privy.ready || job.connecting}
-                  testId="connect-option-privy"
-                  onClick={() => {
-                    const mode = privy.onPick();
-                    setMenuOpen(false);
-                    if (mode === "login") setPickerOpen(false);
-                    else setPickerOpen(true);
-                  }}
-                />
-              ) : null}
-            </div>
-            {job.busy ? (
-              <p className="mt-3 text-[10px] uppercase tracking-wider text-[#a78bfa]">
-                {t("connect.busy")}
-              </p>
-            ) : null}
-            {job.error ? (
-              <p className="mt-3 text-[10px] text-[#fca5a5]">{job.error}</p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+              {/*
+                Portaled to document.body. The nav header uses backdrop-blur,
+                which would make a nested `fixed` modal stick to the header
+                and clip the title above the viewport.
+              */}
+              <div className="flex min-h-full items-center justify-center p-4">
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="connect-wallet-title"
+                  data-testid="connect-wallet-modal"
+                  className="relative my-auto w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg border border-[#2dd4bf44] bg-[#141820] p-5 shadow-[0_0_40px_#2dd4bf22]"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <h2
+                    id="connect-wallet-title"
+                    className="pr-8 text-sm font-semibold text-[#e8eef5]"
+                  >
+                    {t("connect.title")}
+                  </h2>
+                  <button
+                    type="button"
+                    aria-label={t("connect.close")}
+                    data-testid="connect-close"
+                    className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded text-lg leading-none text-[#8b95a8] hover:bg-[#1a2330] hover:text-[#e8eef5]"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      if (!job.connecting) job.cancel();
+                    }}
+                  >
+                    ×
+                  </button>
+                  <div className="mt-4 flex flex-col gap-2">
+                    <WalletRow
+                      name={PHANTOM}
+                      icon={phantom?.adapter.icon}
+                      hint={
+                        isDetected(phantom?.readyState)
+                          ? t("connect.detected")
+                          : t("connect.notDetected")
+                      }
+                      testId="connect-option-phantom"
+                      onClick={() => choose(PHANTOM)}
+                    />
+                    <WalletRow
+                      name={SOLFLARE}
+                      icon={solflare?.adapter.icon}
+                      hint={
+                        isDetected(solflare?.readyState)
+                          ? t("connect.detected")
+                          : t("connect.notDetected")
+                      }
+                      testId="connect-option-solflare"
+                      onClick={() => choose(SOLFLARE)}
+                    />
+                    {privy ? (
+                      <WalletRow
+                        name={t("connect.privy")}
+                        icon={privyAdapter?.adapter.icon || PRIVY_WALLET_ICON}
+                        hint={
+                          privy.ready ? t("connect.privyHint") : t("privy.busy")
+                        }
+                        disabled={!privy.ready || job.connecting}
+                        testId="connect-option-privy"
+                        onClick={() => {
+                          const mode = privy.onPick();
+                          setMenuOpen(false);
+                          if (mode === "login") setPickerOpen(false);
+                          else setPickerOpen(true);
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  {job.busy ? (
+                    <p
+                      className="mt-3 text-[10px] uppercase tracking-wider text-[#a78bfa]"
+                      data-testid="connect-status"
+                    >
+                      {t("connect.busy")}
+                    </p>
+                  ) : null}
+                  {job.error ? (
+                    <p
+                      className="mt-3 text-[10px] text-[#fca5a5]"
+                      data-testid="connect-error"
+                    >
+                      {job.error}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -532,6 +575,20 @@ function WalletRow({
         <span className="block text-sm text-[#e8eef5]">{name}</span>
         <span className="block text-[10px] text-[#8b95a8]">{hint}</span>
       </span>
+      <svg
+        viewBox="0 0 20 20"
+        className="h-4 w-4 shrink-0 text-[#8b95a8]"
+        aria-hidden
+      >
+        <path
+          d="M7 4.5 12.5 10 7 15.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
     </button>
   );
 }

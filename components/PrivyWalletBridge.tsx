@@ -121,26 +121,30 @@ export function PrivyWalletBridge({ children }: { children: ReactNode }) {
       ) ?? null,
     [standardWallets],
   );
-  const registerKey = privyStandard
-    ? privyStandard.accounts[0]?.address || "pending"
-    : "";
+  // Register only once the embedded account exists. An empty "pending"
+  // wallet makes standard `connect()` return no account and the UI never
+  // leaves "Łączenie…".
+  const registerAddress = privyStandard?.accounts[0]?.address ?? "";
 
   useEffect(() => {
-    if (!registerKey) return;
+    if (!registerAddress) return;
     // WalletProvider subscribes to register events in an effect. A timeout
     // lets that listener attach before we dispatch, or the wallet is stored
     // and never announced.
     const handle = window.setTimeout(() => {
       const wallet = standardRef.current.find(
-        (item) => item.name === "Privy" && "privy:" in item.features,
+        (item) =>
+          item.name === "Privy" &&
+          "privy:" in item.features &&
+          item.accounts[0]?.address === registerAddress,
       );
       if (!wallet) return;
-      if (registeredKeys.has(registerKey)) return;
+      if (registeredKeys.has(registerAddress)) return;
       registerWallet(wallet as unknown as Wallet);
-      registeredKeys.add(registerKey);
+      registeredKeys.add(registerAddress);
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [registerKey]);
+  }, [registerAddress]);
 
   useEffect(() => {
     const current = embeddedRef.current;
