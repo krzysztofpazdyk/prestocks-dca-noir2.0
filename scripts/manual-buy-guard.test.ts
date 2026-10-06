@@ -4,6 +4,7 @@ import { RUN_INDEX_TAKEN_MSG } from "../lib/predca";
 import {
   BUY_ALREADY_IN_FLIGHT_MSG,
   leaveManualBuy,
+  noteUnconfirmedRunIndex,
   recoverRunCollision,
   shouldRetryRunIndex,
   tryEnterManualBuy,
@@ -174,4 +175,40 @@ test("missing or same retry index stops without another submit", async () => {
     );
     assert.deepEqual(submitted, []);
   }
+});
+
+test("a Kup confirm timeout records the index and does not buy the next one", async () => {
+  const created = new Set<number>();
+  const err = new Error("Transaction was not confirmed in 30.00 seconds.");
+  err.name = "TransactionExpiredTimeoutError";
+  (err as Error & { signature: string }).signature = "5".repeat(88);
+  noteUnconfirmedRunIndex(created, 7, err);
+  assert.equal(created.has(7), true);
+  assert.equal(shouldRetryRunIndex(created, 7), false);
+  const submitted: number[] = [];
+  await assert.rejects(
+    () =>
+      recoverRunCollision({
+        failedIndex: 7,
+        createdRunIndices: created,
+        findNextIndex: async () => 8,
+        submitOnce: async (index) => {
+          submitted.push(index);
+          return "sig";
+        },
+      }),
+    (caught: unknown) => {
+      assert.ok(caught instanceof Error);
+      assert.equal(caught.message, BUY_ALREADY_IN_FLIGHT_MSG);
+      return true;
+    },
+  );
+  assert.deepEqual(submitted, []);
+});
+
+test("a non-timeout buy error does not record the run index", () => {
+  const created = new Set<number>();
+  noteUnconfirmedRunIndex(created, 7, new Error("User rejected the request."));
+  assert.equal(created.has(7), false);
+  assert.equal(shouldRetryRunIndex(created, 7), true);
 });

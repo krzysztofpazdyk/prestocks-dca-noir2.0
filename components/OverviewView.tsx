@@ -23,8 +23,11 @@ import {
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
+import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
+import { TxNotice, txMessageWithLink } from "@/components/TxNotice";
 import {
   clusterShortPl,
+  explorerTxUrl,
   formatUsd,
   rawToDollars,
   rpcHost,
@@ -103,9 +106,28 @@ export function OverviewView() {
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
+  const [purchaseTone, setPurchaseTone] = useState<"ok" | "fail" | "pending">("ok");
   /** Sync lock across setWeeklyBudget and simulateBuy. A second Kup returns immediately. */
   const buyInFlightRef = useRef(false);
   const [buyInFlight, setBuyInFlight] = useState(false);
+  const sawPendingSig = useRef(false);
+  const sigUnresolved = predca.pendingSignature != null;
+
+  useEffect(() => {
+    if (predca.pendingSignature) {
+      sawPendingSig.current = true;
+      return;
+    }
+    if (!sawPendingSig.current || purchaseTone !== "pending") return;
+    sawPendingSig.current = false;
+    if (predca.error && isOnChainSignatureReject(predca.error)) {
+      setPurchaseMsg(`${t("msg.purchaseFail")}: ${predca.error}`);
+      setPurchaseTone("fail");
+    } else {
+      setPurchaseMsg(null);
+      setPurchaseTone("ok");
+    }
+  }, [predca.pendingSignature, predca.error, purchaseTone, t]);
   const [faucetBusy, setFaucetBusy] = useState(false);
   const [faucetMsg, setFaucetMsg] = useState<string | null>(null);
   const [faucetErr, setFaucetErr] = useState<string | null>(null);
@@ -219,10 +241,28 @@ export function OverviewView() {
     }
   }
 
+  function markPendingPurchase(): boolean {
+    const sig = predca.pendingSignatureNow();
+    if (!sig) return false;
+    setPurchaseMsg(
+      t("msg.purchasePending", { sig, url: explorerTxUrl(sig) }),
+    );
+    setPurchaseTone("pending");
+    return true;
+  }
+
   async function handlePurchase() {
-    if (!tryEnterManualBuy(buyInFlightRef, predca.txPending)) return;
+    if (
+      !tryEnterManualBuy(
+        buyInFlightRef,
+        predca.txPending || predca.pendingSignatureNow() != null,
+      )
+    ) {
+      return;
+    }
     setBuyInFlight(true);
     try {
+      setPurchaseTone("ok");
       if (top3.length === 0) {
         setPurchaseMsg(t("msg.noRecs"));
         return;
@@ -254,12 +294,14 @@ export function OverviewView() {
           setPurchaseMsg(t("msg.updatingBudget"));
           const budgetSig = await predca.setWeeklyBudget(lsAmount);
           if (!budgetSig) {
+            if (markPendingPurchase()) return;
             const err = predca.lastTxError();
-            setPurchaseMsg(
-              err
-                ? `${t("msg.budgetSyncFail")}: ${err}`
-                : t("msg.budgetSyncFail"),
-            );
+            if (err) {
+              setPurchaseMsg(`${t("msg.budgetSyncFail")}: ${err}`);
+              setPurchaseTone("fail");
+            } else {
+              setPurchaseMsg(null);
+            }
             return;
           }
           // setWeeklyBudget's withTx already refreshed; simulateBuy re-fetches budget.
@@ -268,6 +310,7 @@ export function OverviewView() {
         setPurchaseMsg(null);
         const sig = await predca.simulateBuy(tokenNames);
         if (sig) {
+          setPurchaseTone("ok");
           setPurchaseMsg(
             t("msg.purchaseOk", {
               sig: sig.slice(0, 8),
@@ -275,13 +318,12 @@ export function OverviewView() {
               tokens: tokenNames.join(" · "),
             }),
           );
-        } else {
+        } else if (!markPendingPurchase()) {
           const err = predca.lastTxError();
-          setPurchaseMsg(
-            err
-              ? `${t("msg.purchaseFail")}: ${err}`
-              : t("msg.purchaseFail"),
-          );
+          if (err) {
+            setPurchaseMsg(`${t("msg.purchaseFail")}: ${err}`);
+            setPurchaseTone("fail");
+          }
         }
         return;
       }
@@ -357,6 +399,7 @@ export function OverviewView() {
     Number.isFinite(withdrawAmt) &&
     withdrawAmt > vaultUsdcCap;
   const depositDisabled =
+    sigUnresolved ||
     predca.txPending ||
     !canDeposit ||
     !Number.isFinite(depositAmt) ||
@@ -375,6 +418,7 @@ export function OverviewView() {
   // Manual Buy must NOT disable because keeper/auto-buy phase is "buying".
   // Only this click, the user's own tx, missing recs, vault low, or not ready.
   const purchaseDisabled =
+    sigUnresolved ||
     buyInFlight ||
     top3.length === 0 ||
     predca.txPending ||
@@ -388,7 +432,7 @@ export function OverviewView() {
   const purchaseDisabledReason: string | null = (() => {
     if (!purchaseDisabled) return null;
     // The button label already says the buy is in flight. Do not claim vault-low.
-    if (buyInFlight) return null;
+    if (sigUnresolved || buyInFlight) return null;
     if (predca.txPending) return t("purchase.disabled.tx");
     if (top3.length === 0) return t("purchase.disabled.noRecs");
     if (connected && !onChainReady) return t("purchase.disabled.notReady");
@@ -543,13 +587,14 @@ export function OverviewView() {
                     }
                     setDepositAmt(n);
                   }}
-                  disabled={predca.txPending || !canDeposit}
+                  disabled={predca.txPending || sigUnresolved || !canDeposit}
                   className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#2dd4bf] outline-none focus:border-[#2dd4bf66] disabled:opacity-40"
                 />
                 <button
                   type="button"
                   disabled={depositDisabled}
                   onClick={() => {
+                    if (predca.pendingSignatureNow()) return;
                     const amt =
                       ownerUsdcCap != null
                         ? Math.min(depositAmt, ownerUsdcCap)
@@ -651,10 +696,11 @@ export function OverviewView() {
           </p>
         )}
 
+        {predca.pendingMsg && (
+          <TxNotice message={predca.pendingMsg} tone="pending" className="mt-3" />
+        )}
         {predca.error && (
-          <p className="mt-3 rounded border border-[#f8717133] bg-[#f8717111] px-3 py-2 text-xs text-[#fca5a5]">
-            {predca.error}
-          </p>
+          <TxNotice message={predca.error} tone="error" className="mt-3" />
         )}
         {predca.okMsg && (
           <p className="mt-3 rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
@@ -794,14 +840,16 @@ export function OverviewView() {
                 <button
                   type="button"
                   onClick={() => void handlePurchase()}
-                  disabled={purchaseDisabled || predca.txPending || buyInFlight}
+                  disabled={purchaseDisabled || predca.txPending || buyInFlight || sigUnresolved}
                   className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
                 >
                   {buyInFlight
                     ? t("btn.buying")
-                    : predca.txPending
-                      ? t("btn.txPending")
-                      : t("btn.purchase")}
+                    : sigUnresolved
+                      ? t("btn.waiting")
+                      : predca.txPending
+                        ? t("btn.txPending")
+                        : t("btn.purchase")}
                 </button>
               </div>
             </div>
@@ -838,13 +886,15 @@ export function OverviewView() {
             )}
             {purchaseMsg && (
               <p
-                className={`mt-3 rounded border px-3 py-2 text-xs ${
-                  /nieudany|failed|Could not|Nie udało/i.test(purchaseMsg)
-                    ? "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]"
-                    : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
+                className={`mt-3 break-all rounded border px-3 py-2 text-xs ${
+                  purchaseTone === "pending"
+                    ? "border-[#fbbf2433] bg-[#fbbf2411] text-[#fbbf24]"
+                    : /nieudany|failed|Could not|Nie udało/i.test(purchaseMsg)
+                      ? "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]"
+                      : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
                 }`}
               >
-                {purchaseMsg}
+                {txMessageWithLink(purchaseMsg)}
               </p>
             )}
           </section>

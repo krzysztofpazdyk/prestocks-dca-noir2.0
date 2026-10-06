@@ -1,4 +1,5 @@
 import { RUN_INDEX_TAKEN_MSG } from "./predca";
+import { isUnconfirmedTimeout } from "./vault-follow-up";
 
 /** Shown when this card already created the colliding RunRecord. */
 export const BUY_ALREADY_IN_FLIGHT_MSG = "Zakup już w toku.";
@@ -19,6 +20,20 @@ export function tryEnterManualBuy(gate: ManualBuyGate, txPending: boolean): bool
 
 export function leaveManualBuy(gate: ManualBuyGate): void {
   gate.current = false;
+}
+
+/**
+ * A Kup confirm-timeout may already have created this RunRecord.
+ * Remember the index so a later RunAlreadyExists does not buy the next one.
+ * Other errors leave the set alone (a keeper collision can still retry once).
+ */
+export function noteUnconfirmedRunIndex(
+  createdRunIndices: Set<number>,
+  runIndex: number,
+  err: unknown,
+): void {
+  if (!isUnconfirmedTimeout(err)) return;
+  createdRunIndices.add(runIndex);
 }
 
 /**

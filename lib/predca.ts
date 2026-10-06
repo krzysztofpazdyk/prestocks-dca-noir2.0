@@ -13,6 +13,7 @@ import {
 } from "@solana/web3.js";
 import idl from "@/idl/predca.json";
 import type { Predca } from "@/types/predca";
+import { textKeepingSignature } from "@/lib/vault-follow-up";
 
 export const DEFAULT_PROGRAM_ID =
   "HajLzgcp6fyHVgVLFtwujnU53re47PSMJcQZZes8ZvbU";
@@ -418,8 +419,7 @@ export function parseAnchorError(err: unknown): string {
     );
   }
   const trimmed = (e.message ?? String(err)).trim();
-  if (trimmed.length > 220) return `${trimmed.slice(0, 220)}…`;
-  return trimmed;
+  return textKeepingSignature(trimmed);
 }
 
 function mapCommonSolanaError(msg: string): string | null {

@@ -5,6 +5,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
+import { TxNotice } from "@/components/TxNotice";
 import { formatUsd } from "@/lib/predca";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -348,10 +349,11 @@ export function SettingsView() {
         </p>
       </div>
 
+      {predca.pendingMsg && (
+        <TxNotice message={predca.pendingMsg} tone="pending" />
+      )}
       {predca.error && (
-        <p className="rounded border border-[#f8717133] bg-[#f8717111] px-3 py-2 text-xs text-[#fca5a5]">
-          {predca.error}
-        </p>
+        <TxNotice message={predca.error} tone="error" />
       )}
       {predca.okMsg && (
         <p className="rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
@@ -484,8 +486,11 @@ export function SettingsView() {
             {t("settings.connectForBudget")}
           </p>
         ) : null}
+        {predca.pendingMsg && (
+          <TxNotice message={predca.pendingMsg} tone="pending" />
+        )}
         {predca.error && (
-          <p className="text-[10px] text-[#fca5a5]">{predca.error}</p>
+          <TxNotice message={predca.error} tone="error" />
         )}
         {predca.okMsg && (
           <p className="text-[10px] text-[#2dd4bf]">{predca.okMsg}</p>
