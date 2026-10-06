@@ -30,6 +30,7 @@ import {
   WEEK_MS,
   cleanupOwnerForFailedCycle,
   isBannerHoldActive,
+  shouldCommitAutoBuyEnabled,
   formatWarsawWhen,
   writeAutoBuyMeta,
   writeAutoWeeklyBuy,
@@ -329,9 +330,8 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         }
         throw new Error(err);
       }
-      // Keeper accepted enable. Show On before the purchase checks; forceOff clears it.
-      setEnabledState(true);
-      writeAutoWeeklyBuy(true, cycleOwner);
+      // Do not commit On here. Busy (ok + skipped) must leave the toggle Off.
+      // Enabled is written only after shouldCommitAutoBuyEnabled.
       const forceOff = async (reason: string) => {
         // Epoch moves in the wallet effect, after ownerRef already points at
         // the new pubkey. Bail before any disable so it cannot follow the ref.
@@ -361,19 +361,28 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
             : tRef.current("auto.status.error", { reason }),
         );
       };
-      if (ran.skipped) {
-        if (ran.reason === "busy") {
-          // Busy-only: temporary — do not commit enabled.
-          setPhase("buying");
-          setMessage("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
-          return;
-        }
-        const err = String(ran.error || ran.reason || "purchase skipped");
-        await forceOff(err);
+      if (ran.skipped && ran.reason === "busy") {
+        // Daemon already left enabled false. Roll the toggle back and do not
+        // ask for a disable signature — the user can retry the same enable.
+        const cleanupOwner = cleanupOwnerForFailedCycle(
+          cycleOwner,
+          epoch,
+          statusEpochRef.current,
+        );
+        if (!cleanupOwner) return;
+        setEnabledState(false);
+        writeAutoWeeklyBuy(false, cleanupOwner);
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setPhase("blocked");
+        setBlockReason("busy");
+        setMessage("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
         return;
       }
-      if (!ran.signature || !ran.names || ran.names.length < 3) {
-        await forceOff("Keeper returned success without a completed purchase.");
+      if (!shouldCommitAutoBuyEnabled(ran) || !ran.names) {
+        const err = ran.skipped
+          ? String(ran.error || ran.reason || "purchase skipped")
+          : "Keeper returned success without a completed purchase.";
+        await forceOff(err);
         return;
       }
       // Real purchase succeeded — only now commit enabled (UI + local cache).
