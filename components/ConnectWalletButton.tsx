@@ -314,11 +314,40 @@ function walletNameIsPrivy(name: string | undefined): boolean {
   return name === PRIVY_WALLET_NAME;
 }
 
+function readViewportFrame(): { top: number; height: number } {
+  if (typeof window === "undefined") return { top: 0, height: 0 };
+  const viewport = window.visualViewport;
+  return {
+    top: viewport?.offsetTop ?? 0,
+    height: viewport?.height ?? window.innerHeight,
+  };
+}
+
 function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   const { t } = useI18n();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [frame, setFrame] = useState(readViewportFrame);
   const busyWas = useRef(false);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const update = () => setFrame(readViewportFrame());
+    const handle = window.requestAnimationFrame(update);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", update);
+    viewport?.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      document.body.style.overflow = previous;
+      window.cancelAnimationFrame(handle);
+      viewport?.removeEventListener("resize", update);
+      viewport?.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [pickerOpen]);
 
   useEffect(() => {
     if (job.busy && !busyWas.current) setPickerOpen(true);
@@ -423,29 +452,41 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
       {pickerOpen
         ? createPortal(
             <div
-              className="fixed inset-0 z-[200] overflow-y-auto bg-[#0c0e12cc]"
+              className="fixed inset-x-0 z-[200] box-border overflow-hidden bg-[#0c0e12cc] p-4"
+              style={{
+                top: frame.top,
+                height: frame.height || "100svh",
+                display: "grid",
+                placeItems: "safe center",
+              }}
               onClick={() => {
                 setPickerOpen(false);
                 if (!job.connecting) job.cancel();
               }}
             >
               {/*
-                Portaled to document.body. The nav header uses backdrop-blur,
-                which would make a nested `fixed` modal stick to the header
-                and clip the title above the viewport.
+                Portaled to document.body and sized to the visual viewport.
+                A centered flex child inside a scrolling overlay clips the
+                title above the fold. This grid does not scroll; a too-tall
+                list scrolls inside the dialog, under a sticky title.
               */}
-              <div className="flex min-h-full items-center justify-center p-4">
-                <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="connect-wallet-title"
-                  data-testid="connect-wallet-modal"
-                  className="relative my-auto w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg border border-[#2dd4bf44] bg-[#141820] p-5 shadow-[0_0_40px_#2dd4bf22]"
-                  onClick={(event) => event.stopPropagation()}
-                >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="connect-wallet-title"
+                data-testid="connect-wallet-modal"
+                className="w-full max-w-sm overflow-y-auto overscroll-contain rounded-lg border border-[#2dd4bf44] bg-[#141820] shadow-[0_0_40px_#2dd4bf22]"
+                style={{
+                  maxHeight: frame.height
+                    ? Math.max(160, frame.height - 48)
+                    : "calc(100svh - 3rem)",
+                }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="sticky top-0 z-10 flex items-start justify-between gap-3 bg-[#141820] px-5 pt-5 pb-3">
                   <h2
                     id="connect-wallet-title"
-                    className="pr-8 text-sm font-semibold text-[#e8eef5]"
+                    className="text-sm font-semibold text-[#e8eef5]"
                   >
                     {t("connect.title")}
                   </h2>
@@ -453,7 +494,7 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                     type="button"
                     aria-label={t("connect.close")}
                     data-testid="connect-close"
-                    className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded text-lg leading-none text-[#8b95a8] hover:bg-[#1a2330] hover:text-[#e8eef5]"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-lg leading-none text-[#8b95a8] hover:bg-[#1a2330] hover:text-[#e8eef5]"
                     onClick={() => {
                       setPickerOpen(false);
                       if (!job.connecting) job.cancel();
@@ -461,7 +502,8 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                   >
                     ×
                   </button>
-                  <div className="mt-4 flex flex-col gap-2">
+                </div>
+                <div className="flex flex-col gap-2 px-5 pb-5">
                     <WalletRow
                       name={PHANTOM}
                       icon={phantom?.adapter.icon}
@@ -501,7 +543,6 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                         }}
                       />
                     ) : null}
-                  </div>
                   {job.busy ? (
                     <p
                       className="mt-3 text-[10px] uppercase tracking-wider text-[#a78bfa]"
