@@ -199,6 +199,8 @@ const pl: Dict = {
   "auto.banner.ranking": "Cotygodniowy zakup z vaulta: ranking…",
   "auto.banner.buying":
     "Cotygodniowy zakup z vaulta: keeper (bez podpisu w karcie).",
+  "auto.banner.confirming":
+    "Cotygodniowy zakup z vaulta: czekam na potwierdzenie transakcji.",
 
   "settings.kicker": "Konfiguracja DCA",
   "settings.title": "Ustawienia",
@@ -451,6 +453,8 @@ const en: Dict = {
   "auto.banner.ranking": "Weekly vault purchase: ranking…",
   "auto.banner.buying":
     "Weekly vault purchase: keeper (no in-tab signature).",
+  "auto.banner.confirming":
+    "Weekly vault purchase: waiting for the transaction to confirm.",
 
   "settings.kicker": "DCA configuration",
   "settings.title": "Settings",

@@ -36,6 +36,7 @@ import {
   resolvePendingEnable,
   pendingEnableStillFor,
   shouldCommitAutoBuyEnabled,
+  shouldPollInProgressEnable,
   shouldSendEnable,
   formatWarsawWhen,
   writeAutoBuyMeta,
@@ -374,21 +375,6 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
           }),
         );
       };
-      // Already On with a finished purchase: do not POST /enable again.
-      if (canCommitEnabledFromStatus(prior, cycleOwner)) {
-        commitPurchase(prior);
-        return;
-      }
-      setPhase("buying");
-      setMessage(tRef.current("auto.status.buyingKeeper"));
-      // One signature: daemon syncs prefs on enable.
-      const ran = await keeperEnable(
-        cycleOwner,
-        true,
-        sign,
-        rankPrefsForApi(readRankPrefs()),
-      );
-      if (!stillCurrent()) return;
       // Daemon writes Off itself when enable fails. Do not ask for a second signature.
       const forceOff = async (reason: string) => {
         enablePendingRef.current = false;
@@ -414,7 +400,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
             : tRef.current("auto.status.error", { reason }),
         );
       };
-      if (ran.pending || ran.error === "enable_timeout") {
+      const pollPendingEnable = async () => {
         enablePendingRef.current = true;
         enablePendingOwnerRef.current = cycleOwner;
         enableBaselineRef.current = baseline;
@@ -450,6 +436,37 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
           enablePendingRef.current = true;
           return;
         }
+      };
+      // Already On with a finished purchase: do not POST /enable again.
+      if (canCommitEnabledFromStatus(prior, cycleOwner)) {
+        commitPurchase(prior);
+        return;
+      }
+      // Already On and this week's buy is still in flight. Poll, do not force-buy.
+      if (shouldPollInProgressEnable(prior, cycleOwner)) {
+        await pollPendingEnable();
+        return;
+      }
+      setPhase("buying");
+      setMessage(tRef.current("auto.status.buyingKeeper"));
+      // One signature: daemon syncs prefs on enable.
+      const ran = await keeperEnable(
+        cycleOwner,
+        true,
+        sign,
+        rankPrefsForApi(readRankPrefs()),
+      );
+      if (!stillCurrent()) return;
+      // Unknown outcome (confirm timeout, proxy timeout, busy, recent run)
+      // stays on the v4.19 pending poll. Never roll the toggle Off.
+      if (
+        ran.pending ||
+        ran.error === "enable_timeout" ||
+        ran.reason === "busy" ||
+        ran.reason === "confirming" ||
+        ran.reason === "recent_run"
+      ) {
+        await pollPendingEnable();
         return;
       }
       if (!ran.ok) {
@@ -465,25 +482,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         }
         throw new Error(err);
       }
-      // Do not commit On here. Busy (ok + skipped) must leave the toggle Off.
-      // Enabled is written only after shouldCommitAutoBuyEnabled.
-      if (ran.skipped && ran.reason === "busy") {
-        // Daemon already left enabled false. Roll the toggle back and do not
-        // ask for a disable signature — the user can retry the same enable.
-        const cleanupOwner = cleanupOwnerForFailedCycle(
-          cycleOwner,
-          epoch,
-          statusEpochRef.current,
-        );
-        if (!cleanupOwner) return;
-        setEnabledState(false);
-        writeAutoWeeklyBuy(false, cleanupOwner);
-        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
-        setPhase("blocked");
-        setBlockReason("busy");
-        setMessage("Keeper jest w trakcie zakupu — spróbuj za chwilę.");
-        return;
-      }
+      // Do not commit On until the purchase itself is complete.
       if (!shouldCommitAutoBuyEnabled(ran) || !ran.names) {
         const err = ran.skipped
           ? String(ran.error || ran.reason || "purchase skipped")
@@ -680,9 +679,17 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       setMessage(tRef.current("auto.status.error", { reason: st.error }));
       return;
     }
-    if (st.phase === "buying" || st.phase === "ranking") {
+    if (
+      st.phase === "buying" ||
+      st.phase === "ranking" ||
+      st.phase === "confirming"
+    ) {
       setPhase("buying");
-      setMessage(tRef.current("auto.status.buyingKeeper"));
+      setMessage(
+        st.phase === "confirming"
+          ? tRef.current("auto.banner.confirming")
+          : tRef.current("auto.status.buyingKeeper"),
+      );
       return;
     }
     setPhase("idle");

@@ -53,6 +53,13 @@ import anchor from "@coral-xyz/anchor";
 const { AnchorProvider, BN, Program, Wallet } = anchor;
 import idl from "../idl/predca.json" with { type: "json" };
 import mockMints from "../lib/devnet-mock-mints.json" with { type: "json" };
+import {
+  CONFIRM_POLL_MAX_MS,
+  CONFIRM_POLL_MS,
+  classifySignatureStatus,
+  isRecentForcedRun,
+  signatureFromConfirmError,
+} from "./enable-idempotent.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -888,6 +895,140 @@ async function ensureAtas(connection, owner, mints, payer) {
   void lastValidBlockHeight;
 }
 
+function recentForcedRunResult(ownerStr, lastTs) {
+  const nextAt = new Date(lastTs * 1000 + WEEK_MS).toISOString();
+  return {
+    skipped: true,
+    reason: "recent_run",
+    lastRunTs: lastTs,
+    nextAt,
+    owner: ownerStr,
+  };
+}
+
+async function readSignatureKind(connection, sig) {
+  try {
+    const { value } = await connection.getSignatureStatuses([sig], {
+      searchTransactionHistory: true,
+    });
+    return classifySignatureStatus(value ? value[0] : null);
+  } catch {
+    return "pending";
+  }
+}
+
+async function lastRunMoved(program, cfgPda, lastTsBefore) {
+  try {
+    const cfg = await program.account.userConfig.fetch(cfgPda);
+    const ts = bnToNumber(cfg.lastRunTs);
+    if (!(ts > 0)) return false;
+    if (lastTsBefore > 0) return ts > lastTsBefore;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Poll a confirm-timeout signature. ok / failed / still pending after ~90s. */
+async function waitForBuyConfirm(connection, program, cfgPda, sig, lastTsBefore) {
+  const started = Date.now();
+  while (Date.now() - started <= CONFIRM_POLL_MAX_MS) {
+    const kind = await readSignatureKind(connection, sig);
+    if (kind === "ok" || kind === "failed") return kind;
+    if (await lastRunMoved(program, cfgPda, lastTsBefore)) return "ok";
+    const left = CONFIRM_POLL_MAX_MS - (Date.now() - started);
+    if (left <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CONFIRM_POLL_MS, left)));
+  }
+  return "pending";
+}
+
+function commitExecutedBuy(ownerStr, fields, writeFlag) {
+  const lastRunTs = Math.floor(Date.now() / 1000);
+  const nextAt = new Date(Date.now() + WEEK_MS).toISOString();
+  const patch = {
+    phase: "ok",
+    signature: fields.sig,
+    names: fields.names,
+    amountUsd: fields.amountUsd,
+    runIndex: fields.runIndex,
+    lastRunTs,
+    nextAt,
+    error: null,
+  };
+  writeStatus({ ...patch, owner: ownerStr });
+  writeOwnerState(ownerStr, { ...patch, enabled: true });
+  if (writeFlag) writeEnabled(ownerStr, true);
+  return {
+    skipped: false,
+    signature: fields.sig,
+    names: fields.names,
+    amountUsd: fields.amountUsd,
+    runIndex: fields.runIndex,
+    lastRunTs,
+    nextAt,
+    owner: ownerStr,
+    enabled: true,
+  };
+}
+
+/** After the 90s poll, keep watching until the same confirming signature settles. */
+function watchBuyConfirmInBackground(job) {
+  const deadline = Date.now() + 10 * 60 * 1000;
+  void (async () => {
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, CONFIRM_POLL_MS));
+      const state = readOwnerState(job.ownerStr);
+      if (state.phase !== "confirming" || state.signature !== job.sig) return;
+      let kind = "pending";
+      try {
+        kind = await readSignatureKind(job.connection, job.sig);
+      } catch {
+        kind = "pending";
+      }
+      let moved = false;
+      try {
+        moved = await lastRunMoved(job.program, job.cfgPda, job.lastTsBefore);
+      } catch {
+        moved = false;
+      }
+      if (kind === "ok" || moved) {
+        log("confirm resolved ok", job.sig);
+        commitExecutedBuy(
+          job.ownerStr,
+          {
+            sig: job.sig,
+            names: job.names,
+            amountUsd: job.amountUsd,
+            runIndex: job.runIndex,
+          },
+          true,
+        );
+        return;
+      }
+      if (kind === "failed") {
+        const msg = "execute_buy rejected on-chain";
+        log("confirm resolved failed", job.sig);
+        writeEnabled(job.ownerStr, false);
+        writeOwnerState(job.ownerStr, {
+          phase: "error",
+          enabled: false,
+          error: msg,
+          signature: job.sig,
+        });
+        writeStatus({
+          phase: "error",
+          enabled: false,
+          owner: job.ownerStr,
+          error: msg,
+          signature: job.sig,
+        });
+        return;
+      }
+    }
+  })();
+}
+
 async function runOnce(opts) {
   const force = Boolean(opts.force);
   const spendLimits = loadSpendLimits();
@@ -895,6 +1036,27 @@ async function runOnce(opts) {
     ? new PublicKey(assertOwnerPubkey(opts.owner))
     : loadOwnerPubkey();
   const ownerStr = owner.toBase58();
+  // A previous /enable is still waiting on confirm. Do not execute_buy again.
+  if (force) {
+    const inflight = readOwnerState(ownerStr);
+    if (
+      inflight &&
+      inflight.phase === "confirming" &&
+      typeof inflight.signature === "string" &&
+      inflight.signature.length >= 64
+    ) {
+      return {
+        ok: false,
+        pending: true,
+        phase: "confirming",
+        signature: inflight.signature,
+        runIndex: inflight.runIndex,
+        names: inflight.names,
+        amountUsd: inflight.amountUsd,
+        owner: ownerStr,
+      };
+    }
+  }
   if (opts.requireEnabled !== false && !readEnabled(ownerStr)) {
     writeStatus({ phase: "off", enabled: false, owner: ownerStr });
     writeOwnerState(ownerStr, { phase: "off", enabled: false });
@@ -951,6 +1113,10 @@ async function runOnce(opts) {
   const lastTs = bnToNumber(cfg.lastRunTs);
   const lastMs = lastTs > 0 ? lastTs * 1000 : 0;
   const now = Date.now();
+  if (isRecentForcedRun(force, lastTs, now)) {
+    log("enable force refused: recent_run", ownerStr, lastTs);
+    return recentForcedRunResult(ownerStr, lastTs);
+  }
   if (!force && lastMs > 0 && now - lastMs < WEEK_MS) {
     const nextAt = new Date(lastMs + WEEK_MS).toISOString();
     log("not due; next", nextAt);
@@ -998,6 +1164,10 @@ async function runOnce(opts) {
   }
   const lastTs2 = bnToNumber(cfg.lastRunTs);
   const lastMs2 = lastTs2 > 0 ? lastTs2 * 1000 : 0;
+  if (isRecentForcedRun(force, lastTs2, Date.now())) {
+    log("enable force refused: recent_run", ownerStr, lastTs2);
+    return recentForcedRunResult(ownerStr, lastTs2);
+  }
   if (!force && lastMs2 > 0 && Date.now() - lastMs2 < WEEK_MS) {
     const nextAt = new Date(lastMs2 + WEEK_MS).toISOString();
     log("not due after rank; next", nextAt);
@@ -1022,54 +1192,71 @@ async function runOnce(opts) {
   });
 
   // force (enable) skips on-chain 7d cooldown so manual buys don't block auto-enable.
-  const sig = await program.methods
-    .executeBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0), force)
-    .accounts({
-      keeper: keeper.publicKey,
-      config: configPda(pid)[0],
-      owner,
-      usdcMint: mint,
-      mintA: mints[0],
-      mintB: mints[1],
-      mintC: mints[2],
-    })
-    .rpc();
+  // Anchor confirm is 30s with no blockhash retry. A landed tx still throws
+  // TransactionExpiredTimeoutError. That is not a failed buy.
+  let sig;
+  try {
+    sig = await program.methods
+      .executeBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0), force)
+      .accounts({
+        keeper: keeper.publicKey,
+        config: configPda(pid)[0],
+        owner,
+        usdcMint: mint,
+        mintA: mints[0],
+        mintB: mints[1],
+        mintC: mints[2],
+      })
+      .rpc();
+  } catch (e) {
+    const found = signatureFromConfirmError(e);
+    if (!found) throw e;
+    sig = found;
+    const confirming = {
+      phase: "confirming",
+      signature: sig,
+      runIndex,
+      names,
+      amountUsd: totalDebit,
+      error: null,
+    };
+    writeStatus({ ...confirming, owner: ownerStr });
+    writeOwnerState(ownerStr, confirming);
+    log("execute_buy confirm timeout, polling", sig);
+    const outcome = await waitForBuyConfirm(connection, program, cfgPda, sig, lastTs2);
+    if (outcome === "failed") throw e;
+    if (outcome === "pending") {
+      watchBuyConfirmInBackground({
+        connection,
+        program,
+        cfgPda,
+        sig,
+        ownerStr,
+        names,
+        amountUsd: totalDebit,
+        runIndex,
+        lastTsBefore: lastTs2,
+      });
+      return {
+        ok: false,
+        pending: true,
+        phase: "confirming",
+        signature: sig,
+        runIndex,
+        names,
+        amountUsd: totalDebit,
+        owner: ownerStr,
+      };
+    }
+  }
 
   log("execute_buy OK", sig, `$${totalDebit.toFixed(2)} → ${names.join(" · ")}`);
-  const lastRunTs = Math.floor(Date.now() / 1000);
-  const nextAt = new Date(Date.now() + WEEK_MS).toISOString();
-  writeStatus({
-    phase: "ok",
-    signature: sig,
-    names,
-    amountUsd: totalDebit,
-    runIndex,
-    lastRunTs,
-    nextAt,
-    error: null,
-  });
-  writeOwnerState(ownerStr, {
-    phase: "ok",
-    signature: sig,
-    names,
-    amountUsd: totalDebit,
-    runIndex,
-    lastRunTs,
-    nextAt,
-    enabled: true,
-    error: null,
-  });
-  return {
-    skipped: false,
-    signature: sig,
-    names,
-    amountUsd: totalDebit,
-    runIndex,
-    lastRunTs,
-    nextAt,
-    owner: ownerStr,
-    enabled: true,
-  };
+  // Tick path: keep the enabled flag file in step with state.json.
+  return commitExecutedBuy(
+    ownerStr,
+    { sig, names, amountUsd: totalDebit, runIndex },
+    opts.requireEnabled !== false,
+  );
 }
 
 function parseArgs(argv) {
@@ -1235,21 +1422,39 @@ function startKeeperHttp() {
         } else {
           ensureOwnerPrefsDefaults(owner);
         }
-        // Do not leave enabled=true unless a real purchase commits below.
-        writeEnabled(owner, false);
-        writeOwnerState(owner, { phase: "enabling", enabled: false, error: null });
+        // Mark enabling only after the buy lock is held. A busy tick must not
+        // clear the enabled flag. Confirm-timeout and recent_run restore it.
+        const enabledBefore = readEnabled(owner);
         log("enable attempt for", owner, "force", body.force !== false);
         let result;
         try {
-          result = await withBuyLock(
-            () =>
-              runOnce({
-                force: body.force !== false,
-                requireEnabled: false,
+          result = await withBuyLock(async () => {
+            const inflight = readOwnerState(owner);
+            if (
+              inflight &&
+              inflight.phase === "confirming" &&
+              typeof inflight.signature === "string" &&
+              inflight.signature.length >= 64
+            ) {
+              return {
+                ok: false,
+                pending: true,
+                phase: "confirming",
+                signature: inflight.signature,
+                runIndex: inflight.runIndex,
+                names: inflight.names,
+                amountUsd: inflight.amountUsd,
                 owner,
-              }),
-            owner,
-          );
+              };
+            }
+            writeEnabled(owner, false);
+            writeOwnerState(owner, { phase: "enabling", enabled: false, error: null });
+            return runOnce({
+              force: body.force !== false,
+              requireEnabled: false,
+              owner,
+            });
+          }, owner);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           log("enable force-buy error → disabled", owner, msg);
@@ -1267,16 +1472,80 @@ function startKeeperHttp() {
           return;
         }
         if (result && result.skipped && result.reason === "busy") {
-          // Busy-only: do not commit enabled; client may retry.
-          writeEnabled(owner, false);
-          writeOwnerState(owner, { phase: "buying", enabled: false, error: null });
-          writeStatus({ phase: "buying", enabled: false, owner, error: null });
+          // Lock was not taken. Do not touch enabled or owner state.
           json(res, req, 200, {
             ok: true,
-            enabled: false,
-            owner,
             skipped: true,
             reason: "busy",
+            enabled: readEnabled(owner),
+            owner,
+          });
+          return;
+        }
+        if (result && result.pending) {
+          writeEnabled(owner, enabledBefore);
+          json(res, req, 200, {
+            ok: false,
+            pending: true,
+            enabled: enabledBefore,
+            reason: "confirming",
+            signature: result.signature,
+            owner,
+            phase: result.phase || "confirming",
+            runIndex: result.runIndex,
+            names: result.names,
+            amountUsd: result.amountUsd,
+          });
+          return;
+        }
+        if (result && result.skipped && result.reason === "recent_run") {
+          log("enable force refused: recent_run");
+          const state = readOwnerState(owner);
+          const names = Array.isArray(state.names) ? state.names : [];
+          if (typeof state.signature === "string" && state.signature && names.length >= 3) {
+            writeEnabled(owner, true);
+            writeOwnerState(owner, {
+              phase: "ok",
+              enabled: true,
+              error: null,
+              signature: state.signature,
+              names,
+              amountUsd: state.amountUsd,
+              lastRunTs: result.lastRunTs ?? state.lastRunTs,
+              nextAt: result.nextAt ?? state.nextAt,
+            });
+            writeStatus({
+              phase: "ok",
+              enabled: true,
+              owner,
+              error: null,
+              signature: state.signature,
+              names,
+              amountUsd: state.amountUsd,
+              lastRunTs: result.lastRunTs ?? state.lastRunTs,
+              nextAt: result.nextAt ?? state.nextAt,
+            });
+            json(res, req, 200, {
+              ok: true,
+              enabled: true,
+              owner,
+              signature: state.signature,
+              names,
+              amountUsd: state.amountUsd,
+              lastRunTs: result.lastRunTs ?? state.lastRunTs,
+              nextAt: result.nextAt ?? state.nextAt,
+            });
+            return;
+          }
+          writeEnabled(owner, enabledBefore);
+          json(res, req, 200, {
+            ok: false,
+            pending: true,
+            reason: "recent_run",
+            enabled: enabledBefore,
+            owner,
+            lastRunTs: result.lastRunTs,
+            nextAt: result.nextAt,
           });
           return;
         }
