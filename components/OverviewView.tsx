@@ -255,11 +255,12 @@ export function OverviewView() {
           const budgetSig = await predca.setWeeklyBudget(lsAmount);
           if (!budgetSig) {
             const err = predca.lastTxError();
-            setPurchaseMsg(
-              err
-                ? `${t("msg.budgetSyncFail")}: ${err}`
-                : t("msg.budgetSyncFail"),
-            );
+            // Timeout with a signature is pending in the Predca note, not a failed budget.
+            if (err) {
+              setPurchaseMsg(`${t("msg.budgetSyncFail")}: ${err}`);
+            } else {
+              setPurchaseMsg(null);
+            }
             return;
           }
           // setWeeklyBudget's withTx already refreshed; simulateBuy re-fetches budget.
@@ -277,11 +278,10 @@ export function OverviewView() {
           );
         } else {
           const err = predca.lastTxError();
-          setPurchaseMsg(
-            err
-              ? `${t("msg.purchaseFail")}: ${err}`
-              : t("msg.purchaseFail"),
-          );
+          // No error ref: withTx already showed a pending note. Do not paint a red retry.
+          if (err) {
+            setPurchaseMsg(`${t("msg.purchaseFail")}: ${err}`);
+          }
         }
         return;
       }

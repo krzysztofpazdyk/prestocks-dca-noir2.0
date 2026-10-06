@@ -25,6 +25,9 @@ import {
   CONFIRMED_VAULT_BACKGROUND_POLL_MS,
   CONFIRMED_VAULT_LAG_MSG,
   POST_CONFIRM_VAULT_POLL_MS,
+  UNCONFIRMED_TIMEOUT_MSG,
+  isOnChainSignatureReject,
+  isUnconfirmedTimeout,
   outcomeAfterVaultCheck,
 } from "@/lib/vault-follow-up";
 import { Transaction } from "@solana/web3.js";
@@ -388,47 +391,85 @@ function usePredcaImpl() {
       opts?.requireVaultIncrease && owner
         ? ((await fetchVaultBalance(connection, owner)) ?? 0)
         : null;
+    /** Same vault read as a confirmed deposit (fix B). `signature` empty keeps the short poll. */
+    async function settleVaultOutcome(signature: string, result: T): Promise<T | null> {
+      const before = vaultBefore ?? 0;
+      const increased = await pollVaultAbove(
+        before,
+        signature ? POST_CONFIRM_VAULT_POLL_MS : 12_000,
+      );
+      const outcome = outcomeAfterVaultCheck({
+        confirmed: signature.length > 0,
+        increased,
+        success,
+      });
+      if (outcome.error) {
+        await refresh();
+        if (vaultFollowEpoch.current === epoch) reportError(outcome.error);
+        return null;
+      }
+      const note =
+        !increased && signature
+          ? `${CONFIRMED_VAULT_LAG_MSG} ${explorerTxUrl(signature)}`
+          : outcome.ok;
+      await refresh();
+      if (vaultFollowEpoch.current !== epoch) return result;
+      reportError(null);
+      setOkMsg(note);
+      if (!increased && signature) {
+        void watchVaultCatchUp(epoch, before, success);
+      }
+      return result;
+    }
+
     try {
       const result = await fn();
       if (opts?.requireVaultIncrease && owner) {
         const signature =
           typeof result === "string" && result.length > 0 ? result : "";
         if (signature) await confirmLanded(signature);
-        const before = vaultBefore ?? 0;
         // A confirmed tx can still read the old vault from another replica.
-        const increased = await pollVaultAbove(
-          before,
-          signature ? POST_CONFIRM_VAULT_POLL_MS : 12_000,
-        );
-        const outcome = outcomeAfterVaultCheck({
-          confirmed: signature.length > 0,
-          increased,
-          success,
-        });
-        if (outcome.error) {
-          await refresh();
-          if (vaultFollowEpoch.current === epoch) reportError(outcome.error);
-          return null;
-        }
-        const note =
-          !increased && signature
-            ? `${CONFIRMED_VAULT_LAG_MSG} ${explorerTxUrl(signature)}`
-            : outcome.ok;
-        await refresh();
-        if (vaultFollowEpoch.current !== epoch) return result;
-        reportError(null);
-        setOkMsg(note);
-        if (!increased && signature) {
-          void watchVaultCatchUp(epoch, before, success);
-        }
-        return result;
+        return await settleVaultOutcome(signature, result);
       }
       setOkMsg(success);
       await refresh();
       return result;
     } catch (e) {
-      reportError(parseAnchorError(e));
-      return null;
+      const pending = isUnconfirmedTimeout(e);
+      if (!pending) {
+        reportError(parseAnchorError(e));
+        return null;
+      }
+      const signature = pending.signature;
+      if (vaultFollowEpoch.current === epoch) {
+        reportError(null);
+        setOkMsg(`${UNCONFIRMED_TIMEOUT_MSG} ${explorerTxUrl(signature)}`);
+      }
+      try {
+        await confirmLanded(signature);
+      } catch (confirmErr) {
+        if (isOnChainSignatureReject(confirmErr)) {
+          if (vaultFollowEpoch.current === epoch) {
+            setOkMsg(null);
+            reportError(
+              confirmErr instanceof Error
+                ? confirmErr.message
+                : "Transakcja odrzucona przez Devnet.",
+            );
+          }
+          return null;
+        }
+        // Still unknown. Leave the pending note — do not ask for another send.
+        return null;
+      }
+      if (opts?.requireVaultIncrease && owner) {
+        return await settleVaultOutcome(signature, signature as T);
+      }
+      await refresh();
+      if (vaultFollowEpoch.current !== epoch) return signature as T;
+      reportError(null);
+      setOkMsg(success);
+      return signature as T;
     } finally {
       setTxPending(false);
     }
