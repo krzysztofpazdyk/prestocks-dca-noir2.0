@@ -21,6 +21,110 @@ export const AUTO_BUY_TICK_MS = 60 * 1000;
  */
 export const BANNER_HOLD_MS = 10 * 1000;
 
+/** Re-read keeper status while /enable may still be running on the daemon. */
+export const ENABLE_PENDING_POLL_MS = 5_000;
+/** Stop the poll here. The amber note stays; tick may still see a later result. */
+export const ENABLE_PENDING_MAX_MS = 5 * 60 * 1000;
+
+export type PendingEnableVerdict = "on" | "off" | "pending" | "deadline";
+
+export type EnableStatusSnapshot = {
+  ok?: boolean;
+  enabled?: boolean;
+  skipped?: boolean;
+  signature?: string | null;
+  names?: readonly string[] | null;
+  amountUsd?: number | null;
+  phase?: string | null;
+  error?: string | null;
+  owner?: string | null;
+};
+
+/** Status observed before /enable, so a stale error is not a new failure. */
+export type EnableStatusBaseline = {
+  error?: string | null;
+  phase?: string | null;
+};
+
+/** A second Confirm while the first enable is unresolved must not POST /enable. */
+export function shouldSendEnable(cycleInFlight: boolean): boolean {
+  return !cycleInFlight;
+}
+
+/** Pending poll belongs to one pubkey. A wallet switch must not write the next one. */
+export function pendingEnableStillFor(
+  pendingOwner: string | null,
+  wallet: string | null,
+): boolean {
+  return !!pendingOwner && pendingOwner === wallet;
+}
+
+function ownerMatches(st: EnableStatusSnapshot, owner: string): boolean {
+  const configured =
+    typeof st.owner === "string" && st.owner.trim() ? st.owner.trim() : null;
+  if (!configured) return false;
+  return configured === owner;
+}
+
+/** Keeper already On and the purchase finished. Commit from status; do not /enable. */
+export function canCommitEnabledFromStatus(
+  st: EnableStatusSnapshot,
+  owner: string,
+): boolean {
+  if (st.enabled !== true || !ownerMatches(st, owner)) return false;
+  const fromStatus =
+    (st.phase === "ok" || st.phase === "not_due") &&
+    typeof st.signature === "string" &&
+    st.signature.length > 0 &&
+    st.amountUsd != null &&
+    Array.isArray(st.names) &&
+    st.names.length >= 3;
+  if (fromStatus) return true;
+  return shouldCommitAutoBuyEnabled(st);
+}
+
+function isNewDaemonFailure(
+  st: EnableStatusSnapshot,
+  baseline: EnableStatusBaseline | undefined,
+): boolean {
+  if (st.phase === "buying" || st.phase === "ranking") return false;
+  const err = typeof st.error === "string" ? st.error.trim() : "";
+  if (
+    !err ||
+    err === "keeper_unreachable" ||
+    err === "enable_timeout" ||
+    err === "wallet_required" ||
+    err === "signature_rejected" ||
+    err.startsWith("sign_rejected")
+  ) {
+    return false;
+  }
+  const baseErr = (baseline?.error ?? "").trim();
+  const changed =
+    err !== baseErr || (st.phase === "error" && baseline?.phase !== "error");
+  if (!changed) return false;
+  if (st.phase === "error") return true;
+  return st.enabled === false;
+}
+
+/**
+ * After the client times out, decide whether the daemon has finished.
+ * `on` commits enabled. `off` is a settled failure (no second disable).
+ * `deadline` means we still do not know.
+ */
+export function resolvePendingEnable(
+  st: EnableStatusSnapshot,
+  owner: string,
+  elapsedMs: number,
+  baseline?: EnableStatusBaseline,
+  maxMs = ENABLE_PENDING_MAX_MS,
+): PendingEnableVerdict {
+  if (canCommitEnabledFromStatus(st, owner)) return "on";
+  if (isNewDaemonFailure(st, baseline)) return "off";
+  if (elapsedMs >= maxMs) return "deadline";
+  return "pending";
+}
+
 /** True while a startCycle banner should survive keeper-status ticks. */
 export function isBannerHoldActive(holdUntilMs: number, nowMs: number): boolean {
   return Number.isFinite(holdUntilMs) && holdUntilMs > 0 && nowMs < holdUntilMs;

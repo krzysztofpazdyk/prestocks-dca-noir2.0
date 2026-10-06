@@ -38,6 +38,8 @@ export type KeeperRunResult = {
   /** live = real execute_buy; dry-run = no txs (must match daemon gate). */
   mode?: KeeperMode | string;
   detail?: string;
+  /** Client gave up waiting. The daemon may still finish /enable. */
+  pending?: boolean;
 };
 
 export type KeeperSignFn = (message: Uint8Array) => Promise<Uint8Array>;
@@ -286,11 +288,50 @@ export function clearStatusAuthCache(owner?: string): void {
   removeStoredSession();
 }
 
+/** Abort from our timeout, not a daemon answer. */
+export function isKeeperTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = "name" in err ? (err as { name?: unknown }).name : "";
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+export type KeeperTransport = {
+  ok: boolean;
+  status: number;
+  data: KeeperRunResult | null;
+  timedOut: boolean;
+};
+
+/**
+ * No HTTP body and a timeout or status 0 means the daemon may still be
+ * inside /enable. Do not treat that as a finished failure.
+ */
+export function enableResultFromTransport(r: KeeperTransport): KeeperRunResult {
+  if (!r.data) {
+    if (r.timedOut || r.status === 0) {
+      return { ok: false, pending: true, error: "enable_timeout" };
+    }
+    return { ok: false, error: `http_${r.status}` };
+  }
+  if (!r.ok || r.status === 401 || r.status === 403) {
+    return {
+      ok: false,
+      error:
+        r.data.error ||
+        r.data.detail ||
+        (r.status === 401 || r.status === 403
+          ? "signature_rejected"
+          : `http_${r.status}`),
+    };
+  }
+  return r.data;
+}
+
 async function keeperFetch(
   path: string,
   init?: RequestInit,
   timeoutMs = 90000,
-): Promise<{ ok: boolean; status: number; data: KeeperRunResult | null }> {
+): Promise<KeeperTransport> {
   const ctrl = new AbortController();
   const t = window.setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -318,9 +359,14 @@ async function keeperFetch(
         error: detail || data.error || `http_${resp.status}`,
       };
     }
-    return { ok: resp.ok, status: resp.status, data };
-  } catch {
-    return { ok: false, status: 0, data: null };
+    return { ok: resp.ok, status: resp.status, data, timedOut: false };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      timedOut: isKeeperTimeoutError(err),
+    };
   } finally {
     window.clearTimeout(t);
   }
@@ -408,24 +454,7 @@ export async function keeperEnable(
     },
     120000,
   );
-  if (!r.data) {
-    return {
-      ok: false,
-      error: r.status === 0 ? "keeper_unreachable" : `http_${r.status}`,
-    };
-  }
-  if (!r.ok || r.status === 401 || r.status === 403) {
-    return {
-      ok: false,
-      error:
-        r.data.error ||
-        r.data.detail ||
-        (r.status === 401 || r.status === 403
-          ? "signature_rejected"
-          : `http_${r.status}`),
-    };
-  }
-  return r.data;
+  return enableResultFromTransport(r);
 }
 
 export async function keeperDisable(

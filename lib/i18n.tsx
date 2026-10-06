@@ -190,6 +190,10 @@ const pl: Dict = {
   "auto.status.needVault":
     "Najpierw wpłać USDC do vaulta na Overview. Auto-zakup startuje, gdy vault ma środki.",
   "auto.status.error": "Auto-zakup nieudany: {reason}",
+  "auto.status.enablePending":
+    "Keeper jeszcze kończy włączanie. Zaczekaj — nie wysyłaj drugiego włączenia.",
+  "auto.status.enableUnknown":
+    "Nie wiadomo, czy keeper skończył włączanie. Sprawdź status auto-zakupu.",
   "auto.status.backoff":
     "Auto-zakup: ponowna próba za chwilę (ostatnia nieudana).",
   "auto.banner.ranking": "Cotygodniowy zakup z vaulta: ranking…",
@@ -438,6 +442,10 @@ const en: Dict = {
   "auto.status.needVault":
     "Deposit USDC into the vault on Overview first. Auto-buy starts once the vault holds funds.",
   "auto.status.error": "Auto-buy failed: {reason}",
+  "auto.status.enablePending":
+    "The keeper is still finishing enable. Wait — don't send a second enable.",
+  "auto.status.enableUnknown":
+    "It is unknown whether the keeper finished enabling. Check the auto-buy status.",
   "auto.status.backoff":
     "Auto-buy: retrying shortly (last attempt failed).",
   "auto.banner.ranking": "Weekly vault purchase: ranking…",
