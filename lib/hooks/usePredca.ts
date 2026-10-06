@@ -22,6 +22,7 @@ import {
   recoverRunCollision,
   tryEnterManualBuy,
 } from "@/lib/manual-buy-guard";
+import { refreshWriteStillCurrent } from "@/lib/predca-refresh";
 import {
   CONFIRMED_VAULT_BACKGROUND_POLL_MS,
   CONFIRMED_VAULT_LAG_MSG,
@@ -198,7 +199,9 @@ function usePredcaImpl() {
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
   const lastErrorRef = useRef<string | null>(null);
-  /** Bumps when a new tx starts so a late vault refresh cannot overwrite it. */
+  /** Bumps on wallet change so an in-flight refresh cannot write the previous owner. */
+  const dataEpoch = useRef(0);
+  /** Bumps when a new tx starts, and again on wallet change, so a late vault follow cannot toast. */
   const vaultFollowEpoch = useRef(0);
   function reportError(msg: string | null) {
     lastErrorRef.current = msg;
@@ -226,13 +229,35 @@ function usePredcaImpl() {
   useEffect(() => {
     const prev = seenOwnerKey.current;
     seenOwnerKey.current = ownerKey;
+    // First mount must not drop the initial refresh. A later pubkey change does.
     if (prev === undefined || prev === ownerKey) return;
+    dataEpoch.current += 1;
+    vaultFollowEpoch.current += 1;
     setPending(null);
+    setOkMsg(null);
+    reportError(null);
+    setConfig(null);
+    setVaultUsdc(null);
+    setOwnerUsdc(null);
+    setSolBalance(null);
+    setTokenBalances([]);
+    setRuns([]);
   }, [ownerKey]);
 
   const refresh = useCallback(async () => {
+    const epochAtStart = dataEpoch.current;
+    const ownerAtStart = owner?.toBase58() ?? null;
+    const still = () =>
+      refreshWriteStillCurrent(
+        epochAtStart,
+        ownerAtStart,
+        dataEpoch.current,
+        ownerRef.current?.toBase58() ?? null,
+      );
+    if (!still()) return;
     reportError(null);
     if (!owner) {
+      if (!still()) return;
       setConfig(null);
       setVaultUsdc(null);
       setOwnerUsdc(null);
@@ -241,6 +266,7 @@ function usePredcaImpl() {
       setRuns([]);
       return;
     }
+    if (!still()) return;
     setLoading(true);
     try {
       const solPromise = fetchSolBalance(connection, owner);
@@ -259,6 +285,7 @@ function usePredcaImpl() {
           ownerBalPromise,
           tokensPromise,
         ]);
+        if (!still()) return;
         setSolBalance(sol);
         setOwnerUsdc(ownerBal);
         setTokenBalances(tokens);
@@ -269,6 +296,7 @@ function usePredcaImpl() {
       }
 
       const cfg = await fetchUserConfig(program, owner);
+      if (!still()) return;
       setConfig(cfg);
 
       if (cfg) {
@@ -279,6 +307,7 @@ function usePredcaImpl() {
           solPromise,
           tokensPromise,
         ]);
+        if (!still()) return;
         setVaultUsdc(bal);
         setRuns(records);
         setOwnerUsdc(ownerBal);
@@ -290,6 +319,7 @@ function usePredcaImpl() {
           solPromise,
           tokensPromise,
         ]);
+        if (!still()) return;
         setVaultUsdc(null);
         setRuns([]);
         setOwnerUsdc(ownerBal);
@@ -297,8 +327,10 @@ function usePredcaImpl() {
         setTokenBalances(tokens);
       }
     } catch (e) {
+      if (!still()) return;
       reportError(parseAnchorError(e));
     } finally {
+      if (!still()) return;
       setLoading(false);
     }
   }, [program, owner, connection, mint]);
