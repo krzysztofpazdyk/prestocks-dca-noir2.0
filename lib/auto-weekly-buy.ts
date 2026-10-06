@@ -41,6 +41,21 @@ export function cleanupOwnerForFailedCycle(
   return cycleOwner;
 }
 
+/**
+ * Local On (toggle + localStorage) is committed only after a real purchase.
+ * ok + skipped, including reason "busy", must stay Off.
+ */
+export function shouldCommitAutoBuyEnabled(ran: {
+  ok?: boolean;
+  skipped?: boolean;
+  signature?: string | null;
+  names?: readonly string[] | null;
+}): boolean {
+  if (!ran.ok || ran.skipped) return false;
+  if (!ran.signature) return false;
+  return Boolean(ran.names && ran.names.length >= 3);
+}
+
 export const LS_AUTO_WEEKLY_BUY = "prestocks.autoWeeklyBuy";
 export const LS_AUTO_WEEKLY_META = "prestocks.autoWeeklyBuy.meta";
 export const LS_WEEKLY_BUDGET = "predca_weekly_budget_usd";
