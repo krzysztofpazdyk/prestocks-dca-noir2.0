@@ -17,6 +17,11 @@ import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
 import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
 import { withOneStaleBlockhashRetry } from "@/lib/privy-blockhash";
 import {
+  leaveManualBuy,
+  recoverRunCollision,
+  tryEnterManualBuy,
+} from "@/lib/manual-buy-guard";
+import {
   CONFIRMED_VAULT_BACKGROUND_POLL_MS,
   CONFIRMED_VAULT_LAG_MSG,
   POST_CONFIRM_VAULT_POLL_MS,
@@ -163,6 +168,10 @@ function usePredcaImpl() {
   const [runs, setRuns] = useState<RunRecordData[]>([]);
   const [loading, setLoading] = useState(false);
   const [txPending, setTxPending] = useState(false);
+  /** Closes the gap before withTx sets txPending. A second simulateBuy returns immediately. */
+  const buyLockRef = useRef(false);
+  /** Run indices this card created. A collision on one of these is not retried. */
+  const createdRunIndicesRef = useRef(new Set<number>());
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
   const lastErrorRef = useRef<string | null>(null);
@@ -597,96 +606,113 @@ function usePredcaImpl() {
       return null;
     }
 
-    // Re-fetch config so budget is fresh after setWeeklyBudget in the same turn
-    // (hook closure would otherwise keep the pre-sync weeklyBudgetUsd).
-    const freshConfig = await fetchUserConfig(program, owner);
-    if (!freshConfig) {
-      reportError(
-        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
-      );
-      return null;
-    }
-    const budget = rawToDollars(freshConfig.weeklyBudgetUsdc);
-    const amountEach = Math.floor((budget * 1e6) / 3) / 1e6;
-    const totalDebit = amountEach * 3;
-    const vaultNow =
-      vaultUsdc != null
-        ? vaultUsdc
-        : await fetchVaultBalance(connection, owner);
-    if (vaultNow == null || vaultNow < totalDebit) {
-      reportError(
-        `Za mało USDC w vault (on-chain): ${(vaultNow ?? 0).toFixed(2)} < ${totalDebit.toFixed(2)}.`,
-      );
-      return null;
-    }
-
-    // Fresh on-chain index. `runs` is stale after a keeper buy until refresh.
-    let nextIndex: number | null;
+    // Before the first await. withTx sets txPending only after config/vault/index.
+    // Do not reportError here: a duplicate call must not clobber the buy in flight.
+    if (!tryEnterManualBuy(buyLockRef, false)) return null;
+    setTxPending(true);
     try {
-      nextIndex = await findNextRunIndex(program, owner);
-    } catch (e) {
-      reportError(parseAnchorError(e));
-      return null;
-    }
-    if (nextIndex == null) {
-      reportError(
-        "Brak wolnego indeksu RunRecord (limit skanu). Odśwież i spróbuj ponownie.",
-      );
-      return null;
-    }
-
-    const submitAt = async (runIndex: number) => {
-      // Pre-create owner ATAs (idempotent) — program requires them to exist.
-      await ensureOwnerAtas(
-        connection,
-        owner,
-        mints,
-        async (tx: Transaction, conn) => {
-          const sig = await sendTransaction(tx, conn, {
-            skipPreflight: false,
-            preflightCommitment: "confirmed",
-          });
-          const latest = await conn.getLatestBlockhash("confirmed");
-          await conn.confirmTransaction(
-            { signature: sig, ...latest },
-            "confirmed",
-          );
-          return sig;
-        },
-      );
-
-      // Anchor 0.32 resolves PDAs (vault, mint_auth, ATAs, run_record) + signers.
-      return program.methods
-        .simulateBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0))
-        .accounts({
-          usdcMint: mint,
-          mintA: mints[0],
-          mintB: mints[1],
-          mintC: mints[2],
-        })
-        .rpc();
-    };
-
-    const submitOnce = (runIndex: number) =>
-      withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
-
-    return withTx(async () => {
-      try {
-        return await submitOnce(nextIndex);
-      } catch (e) {
-        if (!isRunAlreadyExists(e)) throw e;
-        const retryIndex = await findNextRunIndex(program, owner);
-        if (retryIndex == null || retryIndex === nextIndex) {
-          throw new Error(RUN_INDEX_TAKEN_MSG);
-        }
-        try {
-          return await submitOnce(retryIndex);
-        } catch (e2) {
-          if (isRunAlreadyExists(e2)) throw new Error(RUN_INDEX_TAKEN_MSG);
-          throw e2;
-        }
+      // Re-fetch config so budget is fresh after setWeeklyBudget in the same turn
+      // (hook closure would otherwise keep the pre-sync weeklyBudgetUsd).
+      const freshConfig = await fetchUserConfig(program, owner);
+      if (!freshConfig) {
+        reportError(
+          "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
+        );
+        return null;
       }
-    }, `Zakup on-chain (simulate_buy): $${totalDebit.toFixed(2)} z vault → ⅓ na ${names.join(" · ")}`);
+      const budget = rawToDollars(freshConfig.weeklyBudgetUsdc);
+      const amountEach = Math.floor((budget * 1e6) / 3) / 1e6;
+      const totalDebit = amountEach * 3;
+      const vaultNow =
+        vaultUsdc != null
+          ? vaultUsdc
+          : await fetchVaultBalance(connection, owner);
+      if (vaultNow == null || vaultNow < totalDebit) {
+        reportError(
+          `Za mało USDC w vault (on-chain): ${(vaultNow ?? 0).toFixed(2)} < ${totalDebit.toFixed(2)}.`,
+        );
+        return null;
+      }
+
+      // Fresh on-chain index. `runs` is stale after a keeper buy until refresh.
+      let scanned: number | null;
+      try {
+        scanned = await findNextRunIndex(program, owner);
+      } catch (e) {
+        reportError(parseAnchorError(e));
+        return null;
+      }
+      if (scanned == null) {
+        reportError(
+          "Brak wolnego indeksu RunRecord (limit skanu). Odśwież i spróbuj ponownie.",
+        );
+        return null;
+      }
+      const nextIndex = scanned;
+
+      const submitAt = async (runIndex: number) => {
+        // Pre-create owner ATAs (idempotent) — program requires them to exist.
+        await ensureOwnerAtas(
+          connection,
+          owner,
+          mints,
+          async (tx: Transaction, conn) => {
+            const sig = await sendTransaction(tx, conn, {
+              skipPreflight: false,
+              preflightCommitment: "confirmed",
+            });
+            const latest = await conn.getLatestBlockhash("confirmed");
+            await conn.confirmTransaction(
+              { signature: sig, ...latest },
+              "confirmed",
+            );
+            return sig;
+          },
+        );
+
+        // Anchor 0.32 resolves PDAs (vault, mint_auth, ATAs, run_record) + signers.
+        return program.methods
+          .simulateBuy(new BN(runIndex), mints, Array.from({ length: 32 }, () => 0))
+          .accounts({
+            usdcMint: mint,
+            mintA: mints[0],
+            mintB: mints[1],
+            mintC: mints[2],
+          })
+          .rpc();
+      };
+
+      const submitOnce = (runIndex: number) =>
+        withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
+
+      const submitAndRemember = async (runIndex: number) => {
+        const sig = await submitOnce(runIndex);
+        createdRunIndicesRef.current.add(runIndex);
+        return sig;
+      };
+
+      return await withTx(async () => {
+        try {
+          return await submitAndRemember(nextIndex);
+        } catch (e) {
+          if (!isRunAlreadyExists(e)) throw e;
+          try {
+            return await recoverRunCollision({
+              failedIndex: nextIndex,
+              createdRunIndices: createdRunIndicesRef.current,
+              findNextIndex: () => findNextRunIndex(program, owner),
+              submitOnce: submitAndRemember,
+            });
+          } catch (e2) {
+            if (isRunAlreadyExists(e2)) throw new Error(RUN_INDEX_TAKEN_MSG);
+            throw e2;
+          }
+        }
+      }, `Zakup on-chain (simulate_buy): $${totalDebit.toFixed(2)} z vault → ⅓ na ${names.join(" · ")}`);
+    } finally {
+      leaveManualBuy(buyLockRef);
+      setTxPending(false);
+    }
   }
 
   function clearMessages() {
