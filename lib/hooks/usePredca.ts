@@ -15,7 +15,13 @@ import { AnchorProvider } from "@coral-xyz/anchor";
 import { useConnection, useAnchorWallet, useWallet } from "@solana/wallet-adapter-react";
 import { usePrivyTxOverride } from "@/components/PrivyWalletBridge";
 import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
-import { isStaleBlockhashError } from "@/lib/privy-blockhash";
+import { withOneStaleBlockhashRetry } from "@/lib/privy-blockhash";
+import {
+  CONFIRMED_VAULT_BACKGROUND_POLL_MS,
+  CONFIRMED_VAULT_LAG_MSG,
+  POST_CONFIRM_VAULT_POLL_MS,
+  outcomeAfterVaultCheck,
+} from "@/lib/vault-follow-up";
 import { Transaction } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
 import {
@@ -34,6 +40,7 @@ import {
   fetchRunRecords,
   fetchSolBalance,
   fetchUserConfig,
+  explorerTxUrl,
   fetchVaultBalance,
   findNextRunIndex,
   formatTs,
@@ -159,6 +166,8 @@ function usePredcaImpl() {
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
   const lastErrorRef = useRef<string | null>(null);
+  /** Bumps when a new tx starts so a late vault refresh cannot overwrite it. */
+  const vaultFollowEpoch = useRef(0);
   function reportError(msg: string | null) {
     lastErrorRef.current = msg;
     setError(msg);
@@ -318,11 +327,51 @@ function usePredcaImpl() {
     );
   }
 
+  async function pollVaultAbove(before: number, budgetMs: number): Promise<boolean> {
+    if (!owner) return false;
+    const started = Date.now();
+    while (Date.now() - started < budgetMs) {
+      const vaultAfter = (await fetchVaultBalance(connection, owner)) ?? 0;
+      if (vaultAfter > before + 1e-6) return true;
+      const left = budgetMs - (Date.now() - started);
+      if (left <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(800, left)));
+    }
+    return false;
+  }
+
+  async function watchVaultCatchUp(
+    epoch: number,
+    before: number,
+    success: string,
+  ): Promise<void> {
+    const started = Date.now();
+    while (Date.now() - started < CONFIRMED_VAULT_BACKGROUND_POLL_MS) {
+      if (vaultFollowEpoch.current !== epoch || !owner) return;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      if (vaultFollowEpoch.current !== epoch || !owner) return;
+      try {
+        const vaultAfter = (await fetchVaultBalance(connection, owner)) ?? 0;
+        if (!(vaultAfter > before + 1e-6)) continue;
+        if (vaultFollowEpoch.current !== epoch) return;
+        await refresh();
+        if (vaultFollowEpoch.current === epoch) {
+          reportError(null);
+          setOkMsg(success);
+        }
+        return;
+      } catch {
+        /* Public RPC can still be behind the confirmed signature. */
+      }
+    }
+  }
+
   async function withTx<T>(
     fn: () => Promise<T>,
     success: string,
     opts?: { requireVaultIncrease?: boolean },
   ): Promise<T | null> {
+    const epoch = ++vaultFollowEpoch.current;
     reportError(null);
     setOkMsg(null);
     setTxPending(true);
@@ -333,27 +382,37 @@ function usePredcaImpl() {
     try {
       const result = await fn();
       if (opts?.requireVaultIncrease && owner) {
-        if (typeof result === "string" && result.length > 0) {
-          await confirmLanded(result);
-        }
-        // Same RPC can confirm on one replica and still serve the old
-        // vault balance from another. Poll briefly, then fail honestly.
+        const signature =
+          typeof result === "string" && result.length > 0 ? result : "";
+        if (signature) await confirmLanded(signature);
         const before = vaultBefore ?? 0;
-        let vaultAfter = before;
-        const balanceStarted = Date.now();
-        while (Date.now() - balanceStarted < 12_000) {
-          vaultAfter = (await fetchVaultBalance(connection, owner)) ?? 0;
-          if (vaultAfter > before + 1e-6) break;
-          await new Promise((resolve) => setTimeout(resolve, 800));
-        }
-        if (!(vaultAfter > before + 1e-6)) {
-          const unchanged =
-            "Podpis przyjęty, ale saldo vault się nie zmieniło. Spróbuj wpłacić ponownie.";
+        // A confirmed tx can still read the old vault from another replica.
+        const increased = await pollVaultAbove(
+          before,
+          signature ? POST_CONFIRM_VAULT_POLL_MS : 12_000,
+        );
+        const outcome = outcomeAfterVaultCheck({
+          confirmed: signature.length > 0,
+          increased,
+          success,
+        });
+        if (outcome.error) {
           await refresh();
-          // refresh() clears the error at the start. Set it again after.
-          reportError(unchanged);
+          if (vaultFollowEpoch.current === epoch) reportError(outcome.error);
           return null;
         }
+        const note =
+          !increased && signature
+            ? `${CONFIRMED_VAULT_LAG_MSG} ${explorerTxUrl(signature)}`
+            : outcome.ok;
+        await refresh();
+        if (vaultFollowEpoch.current !== epoch) return result;
+        reportError(null);
+        setOkMsg(note);
+        if (!increased && signature) {
+          void watchVaultCatchUp(epoch, before, success);
+        }
+        return result;
       }
       setOkMsg(success);
       await refresh();
@@ -405,35 +464,39 @@ function usePredcaImpl() {
         );
         return null;
       }
-      return withTx(async () => {
-        const initIx = await program.methods
-          .initializeUser(budgetRaw)
-          .accounts({ usdcMint: mint })
-          .instruction();
-        const depositIx = await program.methods
-          .depositUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .instruction();
-        const tx = new Transaction().add(initIx, depositIx);
-        return provider.sendAndConfirm(tx);
-      },
-      `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
-      { requireVaultIncrease: isPrivy },
-    );
+      return withTx(
+        () =>
+          withOneStaleBlockhashRetry(isPrivy, async () => {
+            const initIx = await program.methods
+              .initializeUser(budgetRaw)
+              .accounts({ usdcMint: mint })
+              .instruction();
+            const depositIx = await program.methods
+              .depositUsdc(raw)
+              .accounts({
+                usdcMint: mint,
+                ownerUsdc: ownerUsdcAtaPk,
+              })
+              .instruction();
+            const tx = new Transaction().add(initIx, depositIx);
+            return provider.sendAndConfirm(tx);
+          }),
+        `Zainicjalizowano Predca + wpłacono ${amountUsd} USDC do vault.`,
+        { requireVaultIncrease: isPrivy },
+      );
     }
 
     return withTx(
       () =>
-        program.methods
-          .depositUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .rpc(),
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods
+            .depositUsdc(raw)
+            .accounts({
+              usdcMint: mint,
+              ownerUsdc: ownerUsdcAtaPk,
+            })
+            .rpc(),
+        ),
       `Wpłacono ${amountUsd} USDC do vault.`,
       { requireVaultIncrease: isPrivy },
     );
@@ -462,13 +525,15 @@ function usePredcaImpl() {
     const ownerUsdcAtaPk = ownerUsdcAta(owner, mint);
     return withTx(
       () =>
-        program.methods
-          .withdrawUsdc(raw)
-          .accounts({
-            usdcMint: mint,
-            ownerUsdc: ownerUsdcAtaPk,
-          })
-          .rpc(),
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods
+            .withdrawUsdc(raw)
+            .accounts({
+              usdcMint: mint,
+              ownerUsdc: ownerUsdcAtaPk,
+            })
+            .rpc(),
+        ),
       `Wypłacono ${amountUsd} USDC z vault.`,
     );
   }
@@ -492,7 +557,10 @@ function usePredcaImpl() {
       return null;
     }
     return withTx(
-      () => program.methods.setWeeklyBudget(raw).rpc(),
+      () =>
+        withOneStaleBlockhashRetry(isPrivy, () =>
+          program.methods.setWeeklyBudget(raw).rpc(),
+        ),
       "Zapisano budżet tygodniowy on-chain.",
     );
   }
@@ -599,16 +667,8 @@ function usePredcaImpl() {
         .rpc();
     };
 
-    const submitOnce = async (runIndex: number) => {
-      try {
-        return await submitAt(runIndex);
-      } catch (e) {
-        // Slow Privy approval can expire the blockhash. One rebuild + re-prompt.
-        // Phantom and Solflare keep the single attempt.
-        if (!isPrivy || !isStaleBlockhashError(e)) throw e;
-        return await submitAt(runIndex);
-      }
-    };
+    const submitOnce = (runIndex: number) =>
+      withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
 
     return withTx(async () => {
       try {
