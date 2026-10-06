@@ -1,6 +1,6 @@
 import { RUN_INDEX_TAKEN_MSG } from "./predca";
 
-/** Shown when this tab already submitted the colliding RunRecord index. */
+/** Shown when this card already created the colliding RunRecord. */
 export const BUY_ALREADY_IN_FLIGHT_MSG = "Zakup już w toku.";
 
 /** Mutable flag. A ref `{ current: boolean }` satisfies this. */
@@ -21,53 +21,34 @@ export function leaveManualBuy(gate: ManualBuyGate): void {
   gate.current = false;
 }
 
-/** How many times this tab has submitted `index`. Call before `submitOnce`. */
-export function noteRunSubmit(counts: Map<number, number>, index: number): number {
-  const next = (counts.get(index) ?? 0) + 1;
-  counts.set(index, next);
-  return next;
-}
-
-export type CollisionRetry =
-  | { kind: "stop"; message: string }
-  | { kind: "retry"; index: number };
-
 /**
- * One retry only, and only when this tab did not already submit `failedIndex`.
- * Count 1 is a keeper (or other) collision: take the next free index.
- * Count > 1 means a sibling click or this tab already sent that index:
- * do not buy the following index.
+ * Retry RunAlreadyExists only when this card did not create `failedIndex`.
+ * A keeper (or anyone else) may take the index: then one next-index retry is ok.
+ * An index in `createdRunIndices` was created here: do not buy the next one.
  */
-export function decideCollisionRetry(args: {
-  failedIndex: number;
-  retryIndex: number | null;
-  submitCountForFailed: number;
-}): CollisionRetry {
-  if (args.submitCountForFailed > 1) {
-    return { kind: "stop", message: BUY_ALREADY_IN_FLIGHT_MSG };
-  }
-  if (args.retryIndex == null || args.retryIndex === args.failedIndex) {
-    return { kind: "stop", message: RUN_INDEX_TAKEN_MSG };
-  }
-  return { kind: "retry", index: args.retryIndex };
+export function shouldRetryRunIndex(
+  createdRunIndices: ReadonlySet<number>,
+  failedIndex: number,
+): boolean {
+  return !createdRunIndices.has(failedIndex);
 }
 
 /**
- * After RunAlreadyExists on `failedIndex`: maybe submit the next free index once.
- * Does not call `submitOnce` when the decision is stop.
+ * After RunAlreadyExists on `failedIndex`: submit the next free index once,
+ * only when `shouldRetryRunIndex` allows it. Does not call `submitOnce` on stop.
  */
 export async function recoverRunCollision(args: {
   failedIndex: number;
-  counts: ReadonlyMap<number, number>;
+  createdRunIndices: ReadonlySet<number>;
   findNextIndex: () => Promise<number | null>;
   submitOnce: (index: number) => Promise<string>;
 }): Promise<string> {
+  if (!shouldRetryRunIndex(args.createdRunIndices, args.failedIndex)) {
+    throw new Error(BUY_ALREADY_IN_FLIGHT_MSG);
+  }
   const retryIndex = await args.findNextIndex();
-  const decision = decideCollisionRetry({
-    failedIndex: args.failedIndex,
-    retryIndex,
-    submitCountForFailed: args.counts.get(args.failedIndex) ?? 0,
-  });
-  if (decision.kind === "stop") throw new Error(decision.message);
-  return args.submitOnce(decision.index);
+  if (retryIndex == null || retryIndex === args.failedIndex) {
+    throw new Error(RUN_INDEX_TAKEN_MSG);
+  }
+  return args.submitOnce(retryIndex);
 }

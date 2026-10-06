@@ -103,7 +103,7 @@ export function OverviewView() {
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
-  /** Sync lock for the whole Kup click, including budget sync before simulateBuy. */
+  /** Sync lock across setWeeklyBudget and simulateBuy. A second Kup returns immediately. */
   const buyInFlightRef = useRef(false);
   const [buyInFlight, setBuyInFlight] = useState(false);
   const [faucetBusy, setFaucetBusy] = useState(false);

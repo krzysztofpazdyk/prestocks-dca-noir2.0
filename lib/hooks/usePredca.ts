@@ -18,7 +18,6 @@ import { PRIVY_WALLET_NAME } from "@/lib/privy-embedded-adapter";
 import { withOneStaleBlockhashRetry } from "@/lib/privy-blockhash";
 import {
   leaveManualBuy,
-  noteRunSubmit,
   recoverRunCollision,
   tryEnterManualBuy,
 } from "@/lib/manual-buy-guard";
@@ -171,8 +170,8 @@ function usePredcaImpl() {
   const [txPending, setTxPending] = useState(false);
   /** Closes the gap before withTx sets txPending. A second simulateBuy returns immediately. */
   const buyLockRef = useRef(false);
-  /** Submits of each run index from this tab. >1 means we already sent that index. */
-  const runSubmitCounts = useRef(new Map<number, number>());
+  /** Run indices this card created. A collision on one of these is not retried. */
+  const createdRunIndicesRef = useRef(new Set<number>());
   const [error, setError] = useState<string | null>(null);
   /** Sync last tx error (React state lags one render after await). */
   const lastErrorRef = useRef<string | null>(null);
@@ -686,18 +685,23 @@ function usePredcaImpl() {
       const submitOnce = (runIndex: number) =>
         withOneStaleBlockhashRetry(isPrivy, () => submitAt(runIndex));
 
+      const submitAndRemember = async (runIndex: number) => {
+        const sig = await submitOnce(runIndex);
+        createdRunIndicesRef.current.add(runIndex);
+        return sig;
+      };
+
       return await withTx(async () => {
-        noteRunSubmit(runSubmitCounts.current, nextIndex);
         try {
-          return await submitOnce(nextIndex);
+          return await submitAndRemember(nextIndex);
         } catch (e) {
           if (!isRunAlreadyExists(e)) throw e;
           try {
             return await recoverRunCollision({
               failedIndex: nextIndex,
-              counts: runSubmitCounts.current,
+              createdRunIndices: createdRunIndicesRef.current,
               findNextIndex: () => findNextRunIndex(program, owner),
-              submitOnce,
+              submitOnce: submitAndRemember,
             });
           } catch (e2) {
             if (isRunAlreadyExists(e2)) throw new Error(RUN_INDEX_TAKEN_MSG);
