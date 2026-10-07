@@ -284,6 +284,7 @@ export function SettingsView() {
   const budgetBtnLabel = predca.txPending
     ? t("settings.savingOnChain")
     : t("settings.saveOnChain");
+  const chainBusy = predca.txPending || predca.pendingSignature != null;
 
   async function signAndSavePrefs() {
     setPrefsSaveMsg(null);
@@ -446,7 +447,7 @@ export function SettingsView() {
             onChange={(e) => {
               const n = Number(e.target.value);
               setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
-              predca.clearMessages();
+              predca.clearToasts();
             }}
             onBlur={() => {
               if (ownerBase58) writeWeeklyBudgetUsd(weekly, ownerBase58);
@@ -476,7 +477,7 @@ export function SettingsView() {
         {budgetDirtyOnChain && connected && predca.mint ? (
           <button
             type="button"
-            disabled={predca.txPending || predca.pendingSignature != null}
+            disabled={chainBusy}
             onClick={() => void saveWeeklyBudgetOnChain()}
             className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
           >
@@ -501,7 +502,15 @@ export function SettingsView() {
           <Toggle
             label={t("settings.autoWeekly")}
             checked={autoBuy.enabled}
+            disabled={chainBusy}
             onChange={(v) => {
+              if (
+                predca.txPending ||
+                predca.pendingSignature != null ||
+                predca.pendingSignatureNow()
+              ) {
+                return;
+              }
               if (v) {
                 setAutoConfirmOpen(true);
                 return;
@@ -580,11 +589,19 @@ export function SettingsView() {
               </button>
               <button
                 type="button"
+                disabled={chainBusy}
                 onClick={() => {
+                  if (
+                    predca.txPending ||
+                    predca.pendingSignature != null ||
+                    predca.pendingSignatureNow()
+                  ) {
+                    return;
+                  }
                   setAutoConfirmOpen(false);
                   void autoBuy.startCycle(weekly);
                 }}
-                className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-4 py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11]"
+                className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-4 py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
               >
                 {t("settings.autoWeeklyConfirmOk")}
               </button>
@@ -682,17 +699,23 @@ function Toggle({
   label,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-pressed={checked}
-      onClick={() => onChange(!checked)}
-      className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-start gap-x-4 text-left font-sans text-sm tracking-normal text-[#e8eef5]"
+      disabled={disabled}
+      onClick={() => {
+        if (disabled) return;
+        onChange(!checked);
+      }}
+      className="grid w-full grid-cols-[minmax(0,1fr)_2.75rem] items-start gap-x-4 text-left font-sans text-sm tracking-normal text-[#e8eef5] disabled:opacity-40"
     >
       <span className="min-w-0 whitespace-normal break-words font-sans text-sm leading-snug tracking-normal">
         {label}

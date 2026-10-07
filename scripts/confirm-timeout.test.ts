@@ -9,9 +9,11 @@ import {
   UNRESOLVED_WATCH_POLL_MS,
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
+  clearDropsPending,
   pendingTxMessage,
   rejectedTxMessage,
   textKeepingSignature,
+  unresolvedSignatureBlocksTx,
 } from "../lib/vault-follow-up";
 
 const SIG = "5".repeat(88);
@@ -123,4 +125,17 @@ test("unresolved watch stops around 60s", () => {
   assert.equal(UNRESOLVED_WATCH_MS, 60_000);
   assert.equal(UNRESOLVED_WATCH_POLL_MS, 3_000);
   assert.ok(UNRESOLVED_WATCH_MS <= 60_000);
+});
+
+test("toast cleanup keeps an unresolved signature", () => {
+  assert.equal(clearDropsPending(undefined), true);
+  assert.equal(clearDropsPending({}), true);
+  assert.equal(clearDropsPending({ keepPending: false }), true);
+  assert.equal(clearDropsPending({ keepPending: true }), false);
+});
+
+test("an unresolved signature blocks another on-chain entry", () => {
+  assert.equal(unresolvedSignatureBlocksTx(null), false);
+  assert.equal(unresolvedSignatureBlocksTx(undefined), false);
+  assert.equal(unresolvedSignatureBlocksTx(SIG), true);
 });

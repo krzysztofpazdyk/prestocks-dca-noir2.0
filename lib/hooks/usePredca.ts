@@ -33,8 +33,10 @@ import {
   isOnChainSignatureReject,
   isUnconfirmedTimeout,
   outcomeAfterVaultCheck,
+  clearDropsPending,
   pendingTxMessage,
   rejectedTxMessage,
+  unresolvedSignatureBlocksTx,
 } from "@/lib/vault-follow-up";
 import { Transaction, type PublicKey } from "@solana/web3.js";
 import type { Holding } from "@/lib/mock-data";
@@ -559,6 +561,8 @@ function usePredcaImpl() {
     success: string,
     opts?: { requireVaultIncrease?: boolean },
   ): Promise<T | null> {
+    // A second entry would drop the watcher and send another fee-payer tx.
+    if (unresolvedSignatureBlocksTx(pendingSigRef.current)) return null;
     const epoch = ++vaultFollowEpoch.current;
     reportError(null);
     setOkMsg(null);
@@ -942,10 +946,15 @@ function usePredcaImpl() {
     }
   }
 
-  function clearMessages() {
+  /** Error and success toasts only. Never touches an unresolved signature. */
+  function clearToasts() {
+    clearMessages({ keepPending: true });
+  }
+
+  function clearMessages(opts?: { keepPending?: boolean }) {
     reportError(null);
     setOkMsg(null);
-    setPending(null);
+    if (clearDropsPending(opts)) setPending(null);
   }
 
   return {
@@ -964,6 +973,7 @@ function usePredcaImpl() {
     /** Immediate last tx/validation error after await (ref). */
     lastTxError: () => lastErrorRef.current ?? error,
     okMsg,
+    clearToasts,
     clearMessages,
     config,
     vaultUsdc,
