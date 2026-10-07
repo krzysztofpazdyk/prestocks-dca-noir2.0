@@ -342,9 +342,6 @@ export function SettingsView() {
         </p>
         <h1 className="mt-1 text-xl font-semibold text-[#e8eef5]">{t("settings.title")}</h1>
         <p className="mt-1 text-xs text-[#8b95a8]">{t("settings.intro")}</p>
-        <p className="mt-3 text-xs leading-relaxed text-[#c5cedb]">
-          {t("privy.vaultNote")}
-        </p>
       </div>
 
       {predca.pendingMsg && (
