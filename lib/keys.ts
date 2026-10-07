@@ -1,13 +1,68 @@
-/** localStorage BYOK — never commit secrets; never bake hosted key into Pages. */
+/**
+ * localStorage BYOK. Never commit a TypeSafe secret.
+ * The public playground may seed `NEXT_PUBLIC_TYPESAFE_DEFAULT_KEY` into
+ * localStorage when that key was never written. Next inlines `NEXT_PUBLIC_*`
+ * into the client bundle, so the demo value is extractable from Pages JS.
+ * A saved empty string is an explicit clear and is not overwritten.
+ */
 
 export const LS_TYPESAFE = "prestocks.TYPESAFE_API_KEY";
 export const LS_XAI = "prestocks.XAI_API_KEY";
 export const SS_PRODUCTS = "prestocks.session.products";
 export const SS_RANK = "prestocks.session.rank";
 
-export function readTypesafeKey(): string {
+type BrowserStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+/** SSR has no `window`. `globalThis` keeps the same check testable. */
+function browserLocalStorage(): BrowserStorage | null {
+  const g = globalThis as typeof globalThis & {
+    window?: unknown;
+    localStorage?: BrowserStorage;
+  };
+  if (typeof g.window === "undefined") return null;
+  const storage = g.localStorage;
+  if (
+    !storage ||
+    typeof storage.getItem !== "function" ||
+    typeof storage.setItem !== "function"
+  ) {
+    return null;
+  }
+  return storage;
+}
+
+/**
+ * First visit only: copy the build-time demo key into localStorage.
+ * `null` means never written. `""` (clear + save) stays empty.
+ */
+export function ensureDefaultTypesafeKey(): void {
+  const storage = browserLocalStorage();
+  if (!storage) return;
+  let existing: string | null;
   try {
-    return (localStorage.getItem(LS_TYPESAFE) ?? "").trim();
+    existing = storage.getItem(LS_TYPESAFE);
+  } catch {
+    return;
+  }
+  if (existing !== null) return;
+  const seeded = (process.env.NEXT_PUBLIC_TYPESAFE_DEFAULT_KEY ?? "").trim();
+  if (!seeded) return;
+  try {
+    storage.setItem(LS_TYPESAFE, seeded);
+  } catch {
+    /* private mode / quota — leave the field empty */
+  }
+}
+
+export function readTypesafeKey(): string {
+  ensureDefaultTypesafeKey();
+  const storage = browserLocalStorage();
+  if (!storage) return "";
+  try {
+    return (storage.getItem(LS_TYPESAFE) ?? "").trim();
   } catch {
     return "";
   }

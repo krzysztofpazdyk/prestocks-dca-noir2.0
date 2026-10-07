@@ -1,4 +1,4 @@
-> **Pages mirror v4.21:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
+> **Pages mirror v4.22:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
 
 # PreStocks UI — Noir
 
@@ -92,11 +92,15 @@ Build **nie wymaga** żywego validatora (tylko typy + IDL).
 
 ## BYOK (Bring Your Own Key)
 
-W **Ustawieniach** wklejasz własne klucze (nie konta autora apki). Zapis w **localStorage** — off-chain, nie wysyłamy na serwer:
+W **Ustawieniach** pole TypeSafe może być już wypełnione kluczem demo. Wklejasz własny, żeby go zastąpić. Zapis w **localStorage** (`prestocks.TYPESAFE_API_KEY`) — klient nadal wysyła ten klucz do `/rank`. Serwer nie dostaje osobnego fallbacku.
+
+Build z `NEXT_PUBLIC_TYPESAFE_DEFAULT_KEY` wpisuje tę wartość do localStorage **tylko przy pierwszej wizycie** (klucza jeszcze nie ma). Zapis własnego klucza zostaje. Wyczyszczenie pola i zapis zostawia pusty string — Jev nie wraca, dopóki znowu nie zapiszesz klucza. Build bez tej zmiennej zachowuje się jak wcześniej: puste Ustawienia, brak Jev.
+
+`NEXT_PUBLIC_*` trafia do bundla przeglądarki. Klucz demo da się odczytać z JS na Pages. To świadomy kompromis playgroundu, nie sekret serwera. Prawdziwej wartości nie commituj: CI / lokalny `.env.local` (gitignore).
 
 | Klucz | Opis |
 |-------|------|
-| `TYPESAFE_API_KEY` | Jev — **wymagany** do rankingu (`prestocks.TYPESAFE_API_KEY`) |
+| `TYPESAFE_API_KEY` | Jev — demo albo własny klucz w `prestocks.TYPESAFE_API_KEY`. Jest → etykieta źródła „BYOK · Jev”. Pusto → ranking metryczny. |
 | `XAI_API_KEY` | Grok — **opcjonalny**; pusty = metrics→Jev bez LLM (`prestocks.XAI_API_KEY`) |
 
 ## GitHub Pages (static / DEVNET)
@@ -105,7 +109,7 @@ Static export deploys to:
 **https://krzysztofpazdyk.github.io/prestocks-dca-noir2.0/**
 
 - Build uses `output: 'export'` with `basePath` / `assetPrefix` `/prestocks-dca-noir2.0`.
-- Production env (`.env.production`) points at **Solana DEVNET** only — public `NEXT_PUBLIC_*` values, no private keys.
+- Production env (`.env.production`) points at **Solana DEVNET** only — public `NEXT_PUBLIC_*` values, no private keys. `NEXT_PUBLIC_TYPESAFE_DEFAULT_KEY` zostaw puste w repozytorium. Przed buildem Pages ustaw tę zmienną w środowisku builda (sekret Actions albo lokalnie). Bez niej demo nie wpisuje klucza. Wartość i tak widać w JS strony.
 - CI: `.github/workflows/pages.yml` builds on push to `main` and uploads `out/` to GitHub Pages.
 
 ### Phantom / Solflare / Privy
