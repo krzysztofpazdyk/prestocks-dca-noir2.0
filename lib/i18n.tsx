@@ -41,6 +41,8 @@ const pl: Dict = {
 
   "overview.kicker": "Trading desk · PreStocks Weekly DCA",
   "overview.title": "Overview",
+  "overview.maxDepositHint": "Max depozyt: {amount} USDC (saldo portfela)",
+  "overview.maxWithdrawHint": "Max wypłata: {amount} USDC (saldo vaulta)",
   "overview.disconnectedHint":
     "Portfel odłączony — podłącz wallet, by zobaczyć salda on-chain. {cluster}.",
   "overview.noMintHint":
@@ -266,6 +268,7 @@ const pl: Dict = {
     "Brak RunRecord on-chain — wykonaj pierwszy zakup (simulate_buy) lub poczekaj na record_run.",
   "history.notReady":
     "Predca nie jest gotowe — wpłać USDC na Overview, potem pojawią się przebiegi.",
+  "history.fetchError": "Nie udało się pobrać historii",
   "history.loading": "Ładowanie historii on-chain…",
   "history.runMeta": "Run #{index} · budżet ~${budget} · slot {slot}",
 };
@@ -294,6 +297,8 @@ const en: Dict = {
 
   "overview.kicker": "Trading desk · PreStocks Weekly DCA",
   "overview.title": "Overview",
+  "overview.maxDepositHint": "Max deposit: {amount} USDC (wallet balance)",
+  "overview.maxWithdrawHint": "Max withdraw: {amount} USDC (vault balance)",
   "overview.disconnectedHint":
     "Wallet disconnected — connect to see on-chain balances. {cluster}.",
   "overview.noMintHint":
@@ -519,6 +524,7 @@ const en: Dict = {
     "No on-chain RunRecord yet — make a purchase (simulate_buy) or wait for record_run.",
   "history.notReady":
     "Predca is not ready — deposit USDC on Overview, then runs will appear.",
+  "history.fetchError": "Couldn't load history",
   "history.loading": "Loading on-chain history…",
   "history.runMeta": "Run #{index} · budget ~${budget} · slot {slot}",
 };

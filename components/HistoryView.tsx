@@ -46,6 +46,8 @@ export function HistoryView() {
     intro = t("history.noRuns");
   } else if (predca.status === "no_config" || predca.status === "no_mint") {
     intro = t("history.notReady");
+  } else if (predca.status === "error") {
+    intro = t("history.fetchError");
   } else {
     intro = t("history.connectHint");
   }
@@ -72,7 +74,9 @@ export function HistoryView() {
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
           {predca.status === "loading"
             ? t("history.loading")
-            : t("history.notReady")}
+            : predca.status === "error"
+              ? t("history.fetchError")
+              : t("history.notReady")}
         </p>
       )}
 
