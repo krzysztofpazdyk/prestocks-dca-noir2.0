@@ -248,10 +248,11 @@ const pl: Dict = {
   "settings.prefsSignOk": "Zapisano u keepersa ✓",
   "settings.byokTitle": "BYOK — własne klucze API (Bring Your Own)",
   "settings.byokIntro":
-    "Wklej własne klucze.",
-  "settings.typesafeLabel": "(Jev) — wymagany do rankingu",
+    "Klucz demo Jev jest wpisany. Wklej własny, żeby go zastąpić.",
+  "settings.typesafeLabel":
+    "(Jev) — klucz demo jest wpisany; wklej własny, żeby go zastąpić",
   "settings.xaiLabel":
-    "/ Grok — opcjonalny klucz klienta do analizy Grok (wysyłany do API rankingu); pusty = Jev/metryki bez Grok. TypeSafe nadal wymagany do Jev.",
+    "/ Grok — opcjonalny klucz klienta do analizy Grok (wysyłany do API rankingu); pusty = Jev/metryki bez Grok. Jev bierze klucz TypeSafe z pola powyżej.",
   "settings.show": "Pokaż",
   "settings.hide": "Ukryj",
   "settings.saveKeys": "Zapisz klucze w localStorage",
@@ -502,10 +503,11 @@ const en: Dict = {
   "settings.prefsSignOk": "Saved to keeper ✓",
   "settings.byokTitle": "BYOK — Bring Your Own API Keys",
   "settings.byokIntro":
-    "Paste your own keys.",
-  "settings.typesafeLabel": "(Jev) — required for ranking",
+    "The Jev demo key is filled in. Paste your own to override.",
+  "settings.typesafeLabel":
+    "(Jev) — demo key is filled in; paste your own to override",
   "settings.xaiLabel":
-    "/ Grok — optional client key for Grok analysis (sent to the ranking API); empty = Jev/metrics without Grok. TypeSafe still required for Jev.",
+    "/ Grok — optional client key for Grok analysis (sent to the ranking API); empty = Jev/metrics without Grok. Jev uses the TypeSafe key from the field above.",
   "settings.show": "Show",
   "settings.hide": "Hide",
   "settings.saveKeys": "Save keys to localStorage",

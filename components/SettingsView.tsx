@@ -34,9 +34,7 @@ import {
   writeWeeklyBudgetUsd,
 } from "@/lib/auto-weekly-buy";
 import { useAutoWeeklyBuy } from "@/lib/hooks/useAutoWeeklyBuy";
-
-const LS_TYPESAFE = "prestocks.TYPESAFE_API_KEY";
-const LS_XAI = "prestocks.XAI_API_KEY";
+import { LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
 
 /** Keeper-synced ranking prefs snapshot for dirty detection. */
 type PrefsBaseline = {
@@ -135,7 +133,7 @@ export function SettingsView() {
     setPrefsSaveMsg(null);
     void (async () => {
       try {
-        setTypesafeKey(localStorage.getItem(LS_TYPESAFE) ?? "");
+        setTypesafeKey(readTypesafeKey());
         setXaiKey(localStorage.getItem(LS_XAI) ?? "");
       } catch {
         /* ignore */
