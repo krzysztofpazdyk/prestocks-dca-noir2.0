@@ -6,6 +6,7 @@ import {
   ConnectTimeoutError,
   nextConnectStep,
   runConnectJob,
+  shouldEndPrivySession,
   type ConnectRuntime,
 } from "../lib/connect-wallet";
 
@@ -272,6 +273,68 @@ test("no-op connect is retried, then times out instead of spinning", async () =>
   });
   assert.ok(sim.connects > 1);
   assert.ok(sim.connects < 500);
+});
+
+test("disconnect ends a background Privy session and a Privy wallet", () => {
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: null,
+      activeName: "Phantom",
+      privyAuthenticated: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: null,
+      activeName: "Solflare",
+      privyAuthenticated: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: null,
+      activeName: "Privy",
+      privyAuthenticated: false,
+    }),
+    true,
+  );
+});
+
+test("Phantom or Solflare switch ends a Privy session; picking Privy keeps it", () => {
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: "Phantom",
+      activeName: "Privy",
+      privyAuthenticated: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: "Solflare",
+      activeName: "Phantom",
+      privyAuthenticated: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: "Phantom",
+      activeName: "Phantom",
+      privyAuthenticated: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldEndPrivySession({
+      nextName: "Privy",
+      activeName: "Phantom",
+      privyAuthenticated: true,
+    }),
+    false,
+  );
 });
 
 test("wallet rejection surfaces instead of a timeout", async () => {

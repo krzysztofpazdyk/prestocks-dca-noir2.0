@@ -63,6 +63,27 @@ export function nextConnectStep(input: {
   return "connect";
 }
 
+/**
+ * End the Privy auth session when the user leaves it.
+ * Disconnect does this if Privy is the active adapter or a session is still
+ * open in the background. Picking Phantom or Solflare does the same.
+ * Picking Privy again keeps the session. No second logout button.
+ */
+export function shouldEndPrivySession(input: {
+  /** null = Disconnect. Otherwise the wallet the user just picked. */
+  nextName: string | null;
+  activeName: string | undefined;
+  privyAuthenticated: boolean;
+  privyName?: string;
+}): boolean {
+  const privyName = input.privyName ?? "Privy";
+  const privyActive = input.activeName === privyName;
+  const hasSession = input.privyAuthenticated || privyActive;
+  if (!hasSession) return false;
+  if (input.nextName == null) return true;
+  return input.nextName === "Phantom" || input.nextName === "Solflare";
+}
+
 /** Privy's standard `connect()` only returns accounts it already has. */
 export function adapterHasAccount(adapter: unknown): boolean {
   if (!adapter || typeof adapter !== "object" || !("wallet" in adapter)) {

@@ -16,6 +16,7 @@ import {
   CONNECT_PROMPT_MS,
   ConnectTimeoutError,
   runConnectJob,
+  shouldEndPrivySession,
 } from "@/lib/connect-wallet";
 import { clearStatusAuthCache } from "@/lib/keeper-client";
 import { privyAppId } from "@/lib/privy-devnet";
@@ -240,6 +241,8 @@ type PrivyUi = {
   /** "login" closes our list so the Privy modal is the only dialog. */
   onPick: () => "login" | "connect";
   onLogout: () => Promise<void>;
+  /** Phantom/Solflare: end a Privy session before the adapter switch. */
+  onSwitchTo: (name: string) => Promise<void>;
 };
 
 function PrivyConnect() {
@@ -336,31 +339,61 @@ function PrivyConnect() {
     return "login";
   }, [authenticated, job, login, ready, t, user]);
 
+  const endPrivySession = useCallback(
+    async (nextName: string | null) => {
+      if (
+        !shouldEndPrivySession({
+          nextName,
+          activeName: job.wallet?.adapter.name,
+          privyAuthenticated: authenticated,
+          privyName: PRIVY_WALLET_NAME,
+        })
+      ) {
+        return;
+      }
+      wantPrivy.current = false;
+      try {
+        await logout();
+      } catch {
+        /* session may already be gone */
+      }
+    },
+    [authenticated, job.wallet?.adapter.name, logout],
+  );
+
   const onLogout = useCallback(async () => {
-    const privyActive = walletNameIsPrivy(job.wallet?.adapter.name);
-    // Phantom / Solflare: drop the adapter only. A background Privy
-    // session stays until the active wallet itself is Privy.
-    if (privyActive) wantPrivy.current = false;
+    const endPrivy = shouldEndPrivySession({
+      nextName: null,
+      activeName: job.wallet?.adapter.name,
+      privyAuthenticated: authenticated,
+      privyName: PRIVY_WALLET_NAME,
+    });
+    if (endPrivy) wantPrivy.current = false;
     job.cancel();
     try {
       await job.disconnect();
     } catch {
       /* adapter may already be disconnected */
     }
-    if (!privyActive) return;
-    await logout();
-  }, [job, logout]);
+    if (!endPrivy) return;
+    try {
+      await logout();
+    } catch {
+      /* session may already be gone */
+    }
+  }, [authenticated, job, logout]);
+
+  const onSwitchTo = useCallback(
+    (name: string) => endPrivySession(name),
+    [endPrivySession],
+  );
 
   return (
     <ConnectUi
       job={job}
-      privy={{ ready, onPick, onLogout }}
+      privy={{ ready, onPick, onLogout, onSwitchTo }}
     />
   );
-}
-
-function walletNameIsPrivy(name: string | undefined): boolean {
-  return name === PRIVY_WALLET_NAME;
 }
 
 function readViewportFrame(): { top: number; height: number } {
@@ -444,7 +477,14 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   function choose(name: string) {
     setMenuOpen(false);
     setPickerOpen(true);
-    job.requestConnect(name);
+    const ending = privy?.onSwitchTo(name);
+    if (!ending) {
+      job.requestConnect(name);
+      return;
+    }
+    void ending.finally(() => {
+      job.requestConnect(name);
+    });
   }
 
   const phantom = job.wallets.find((item) => item.adapter.name === PHANTOM);

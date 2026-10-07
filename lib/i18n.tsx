@@ -21,7 +21,7 @@ const pl: Dict = {
   "nav.overview": "Overview",
   "nav.settings": "Ustawienia",
   "nav.history": "Historia",
-  "nav.selectWallet": "Select Wallet",
+  "nav.selectWallet": "Zaloguj",
   "connect.title": "Połącz portfel",
   "connect.close": "Zamknij",
   "connect.privy": "Privy",
