@@ -51,6 +51,21 @@ export function pendingTxMessage(signature: string, explorerUrl: string): string
   return `${UNCONFIRMED_TIMEOUT_MSG} ${signature} ${explorerUrl}`;
 }
 
+/**
+ * Full `clearMessages()` drops the amber signature. Toast-only cleanup
+ * (`keepPending` or `clearToasts`) must not.
+ */
+export function clearDropsPending(opts?: { keepPending?: boolean }): boolean {
+  return opts?.keepPending !== true;
+}
+
+/** Broadcast signature still unresolved — do not start another on-chain tx. */
+export function unresolvedSignatureBlocksTx(
+  pendingSignature: string | null | undefined,
+): boolean {
+  return pendingSignature != null;
+}
+
 /** Red copy when the signature landed with an on-chain error. */
 export function rejectedTxMessage(signature: string, explorerUrl: string): string {
   return `Transakcja odrzucona przez Devnet. ${signature} ${explorerUrl}`;

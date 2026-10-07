@@ -48,6 +48,7 @@ import {
 import { useI18n } from "@/lib/i18n";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { keeperEnabledForConnectedOwner } from "@/lib/keeper-enabled";
+import { unresolvedSignatureBlocksTx } from "@/lib/vault-follow-up";
 
 export type AutoBuyPhase =
   | "idle"
@@ -241,6 +242,18 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
   }, []);
 
   const startCycle = useCallback(async (weeklyBudgetUsd: number) => {
+    const pendingNow = predcaRef.current;
+    if (
+      pendingNow.txPending ||
+      unresolvedSignatureBlocksTx(pendingNow.pendingSignature) ||
+      unresolvedSignatureBlocksTx(pendingNow.pendingSignatureNow())
+    ) {
+      bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+      setPhase("blocked");
+      setBlockReason(null);
+      setMessage(tRef.current("btn.waiting"));
+      return;
+    }
     const amount = Number(weeklyBudgetUsd);
     if (!Number.isFinite(amount) || amount <= 0) {
       bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
