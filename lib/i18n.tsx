@@ -38,8 +38,6 @@ const pl: Dict = {
   "privy.connect": "Połącz portfel Privy",
   "privy.connected": "Privy {address}",
   "privy.busy": "Privy…",
-  "privy.vaultNote":
-    "Konto Privy (e-mail / Google) to osobny adres Solana, inny niż Phantom i Solflare. Ma osobny, pusty vault Predca. Po pierwszym logowaniu Privy: weź faucet Devnet na Overview, potem wpłać (init + deposit) jak zwykle. Zmiana portfela (Phantom ↔ Privy ↔ Solflare) przełącza właściciela on-chain, vault i keepera — tak ma być.",
 
   "overview.kicker": "Trading desk · PreStocks Weekly DCA",
   "overview.title": "Overview",
@@ -291,8 +289,6 @@ const en: Dict = {
   "privy.connect": "Connect Privy wallet",
   "privy.connected": "Privy {address}",
   "privy.busy": "Privy…",
-  "privy.vaultNote":
-    "A Privy account (email / Google) is a separate Solana address from Phantom and Solflare. It has its own empty Predca vault. After the first Privy login: use the Devnet faucet on Overview, then deposit (init + deposit) as usual. Switching wallets (Phantom ↔ Privy ↔ Solflare) switches the on-chain owner, vault, and keeper — that is expected.",
 
   "overview.kicker": "Trading desk · PreStocks Weekly DCA",
   "overview.title": "Overview",

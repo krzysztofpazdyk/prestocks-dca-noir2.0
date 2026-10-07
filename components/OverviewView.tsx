@@ -490,10 +490,6 @@ export function OverviewView() {
         )}
       </div>
 
-      <p className="rounded-lg border border-[#a78bfa33] bg-[#141820] px-4 py-3 text-xs leading-relaxed text-[#c5cedb]">
-        {t("privy.vaultNote")}
-      </p>
-
       {/* On-chain Predca strip */}
       <section className="rounded-lg border border-[#2dd4bf33] bg-[#141820] p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
