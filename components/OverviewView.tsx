@@ -133,6 +133,7 @@ export function OverviewView() {
   const [faucetErr, setFaucetErr] = useState<string | null>(null);
 
   async function onClaimFaucet() {
+    if (predca.pendingSignatureNow()) return;
     if (!publicKey) {
       setFaucetErr(t("faucet.needWallet"));
       return;
@@ -508,7 +509,7 @@ export function OverviewView() {
               <button
                 type="button"
                 onClick={() => void onClaimFaucet()}
-                disabled={faucetBusy || predca.txPending}
+                disabled={faucetBusy || predca.txPending || sigUnresolved}
                 className="rounded border border-[#fbbf2444] bg-[#0c0e12] px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#fbbf24] hover:bg-[#fbbf2411] disabled:opacity-40"
               >
                 {faucetBusy ? t("faucet.busy") : t("faucet.button")}
@@ -671,12 +672,16 @@ export function OverviewView() {
             )}
             {depositOverCap && ownerUsdcCap != null && (
               <p className="text-[10px] text-[#fbbf24]">
-                Max deposit: {formatUsd(ownerUsdcCap)} USDC (wallet balance)
+                {t("overview.maxDepositHint", {
+                  amount: formatUsd(ownerUsdcCap),
+                })}
               </p>
             )}
             {withdrawOverCap && vaultUsdcCap != null && (
               <p className="text-[10px] text-[#fbbf24]">
-                Max withdraw: {formatUsd(vaultUsdcCap)} USDC (vault balance)
+                {t("overview.maxWithdrawHint", {
+                  amount: formatUsd(vaultUsdcCap),
+                })}
               </p>
             )}
           </div>

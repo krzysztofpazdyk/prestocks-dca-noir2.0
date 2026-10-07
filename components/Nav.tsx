@@ -54,7 +54,9 @@ export function Nav() {
           </Link>
           <nav className="flex flex-wrap gap-1">
             {links.map((l) => {
-              const active = pathname === l.href;
+              const norm = (p: string) =>
+                p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
+              const active = norm(pathname) === norm(l.href);
               return (
                 <Link
                   key={l.href}
