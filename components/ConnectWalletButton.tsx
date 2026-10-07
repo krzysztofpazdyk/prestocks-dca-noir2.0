@@ -237,7 +237,6 @@ function AdapterConnect() {
 
 type PrivyUi = {
   ready: boolean;
-  authenticated: boolean;
   /** "login" closes our list so the Privy modal is the only dialog. */
   onPick: () => "login" | "connect";
   onLogout: () => Promise<void>;
@@ -338,22 +337,24 @@ function PrivyConnect() {
   }, [authenticated, job, login, ready, t, user]);
 
   const onLogout = useCallback(async () => {
-    wantPrivy.current = false;
+    const privyActive = walletNameIsPrivy(job.wallet?.adapter.name);
+    // Phantom / Solflare: drop the adapter only. A background Privy
+    // session stays until the active wallet itself is Privy.
+    if (privyActive) wantPrivy.current = false;
     job.cancel();
-    if (walletNameIsPrivy(job.wallet?.adapter.name)) {
-      try {
-        await job.disconnect();
-      } catch {
-        /* adapter may already be disconnected */
-      }
+    try {
+      await job.disconnect();
+    } catch {
+      /* adapter may already be disconnected */
     }
+    if (!privyActive) return;
     await logout();
   }, [job, logout]);
 
   return (
     <ConnectUi
       job={job}
-      privy={{ ready, authenticated, onPick, onLogout }}
+      privy={{ ready, onPick, onLogout }}
     />
   );
 }
@@ -481,19 +482,14 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
             label={t("connect.disconnect")}
             onClick={() => {
               setMenuOpen(false);
+              if (privy) {
+                void privy.onLogout();
+                return;
+              }
               job.cancel();
               void job.disconnect();
             }}
           />
-          {privy?.authenticated ? (
-            <MenuItem
-              label={t("connect.logoutPrivy")}
-              onClick={() => {
-                setMenuOpen(false);
-                void privy.onLogout();
-              }}
-            />
-          ) : null}
         </div>
       ) : null}
 
