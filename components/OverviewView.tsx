@@ -406,11 +406,12 @@ export function OverviewView() {
     depositAmt <= 0 ||
     depositOverCap;
   const withdrawDisabled =
+    sigUnresolved ||
     predca.txPending ||
     !Number.isFinite(withdrawAmt) ||
     withdrawAmt <= 0 ||
     withdrawOverCap;
-  const showWithdraw = onChainReady; // account exists; enablement same as before (txPending only)
+  const showWithdraw = onChainReady;
   const vaultTooLow =
     availableVaultUsdc == null ||
     !Number.isFinite(availableVaultUsdc) ||
@@ -633,13 +634,14 @@ export function OverviewView() {
                     }
                     setWithdrawAmt(n);
                   }}
-                  disabled={predca.txPending}
+                  disabled={predca.txPending || sigUnresolved}
                   className="mono-num min-w-0 flex-1 rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-sm text-[#a78bfa] outline-none focus:border-[#a78bfa66] disabled:opacity-40"
                 />
                 <button
                   type="button"
                   disabled={withdrawDisabled}
                   onClick={() => {
+                    if (predca.pendingSignatureNow()) return;
                     const amt =
                       vaultUsdcCap != null
                         ? Math.min(withdrawAmt, vaultUsdcCap)

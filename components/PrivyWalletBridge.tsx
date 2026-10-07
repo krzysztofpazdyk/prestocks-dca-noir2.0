@@ -149,6 +149,9 @@ export function PrivyWalletBridge({ children }: { children: ReactNode }) {
   useEffect(() => {
     const current = embeddedRef.current;
     if (!current) {
+      // Logout drops the embedded account. A later reconnect must registerWallet
+      // again; a remembered address skips it and the adapter can stall.
+      registeredKeys.clear();
       setPrivyWalletDelegate(null);
       return;
     }

@@ -245,8 +245,10 @@ const pl: Dict = {
   "settings.byokTitle": "BYOK — własne klucze API (Bring Your Own)",
   "settings.byokIntro":
     "Klucz demo Jev jest wpisany. Wklej własny, żeby go zastąpić.",
+  "settings.byokIntroEmpty": "Wklej klucz TypeSafe (Jev).",
   "settings.typesafeLabel":
     "(Jev) — klucz demo jest wpisany; wklej własny, żeby go zastąpić",
+  "settings.typesafeLabelEmpty": "(Jev) — wklej klucz TypeSafe",
   "settings.xaiLabel":
     "/ Grok — opcjonalny klucz klienta do analizy Grok (wysyłany do API rankingu); pusty = Jev/metryki bez Grok. Jev bierze klucz TypeSafe z pola powyżej.",
   "settings.show": "Pokaż",
@@ -496,8 +498,10 @@ const en: Dict = {
   "settings.byokTitle": "BYOK — Bring Your Own API Keys",
   "settings.byokIntro":
     "The Jev demo key is filled in. Paste your own to override.",
+  "settings.byokIntroEmpty": "Paste your TypeSafe (Jev) key.",
   "settings.typesafeLabel":
     "(Jev) — demo key is filled in; paste your own to override",
+  "settings.typesafeLabelEmpty": "(Jev) — paste your TypeSafe key",
   "settings.xaiLabel":
     "/ Grok — optional client key for Grok analysis (sent to the ranking API); empty = Jev/metrics without Grok. Jev uses the TypeSafe key from the field above.",
   "settings.show": "Show",

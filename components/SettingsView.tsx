@@ -98,6 +98,8 @@ export function SettingsView() {
     DEFAULT_SETTINGS.buyDespiteIpo,
   );
   const [typesafeKey, setTypesafeKey] = useState("");
+  /** LS/seed only. Starts false so SSR does not claim a demo key is present. */
+  const [typesafeFilled, setTypesafeFilled] = useState(false);
   const [xaiKey, setXaiKey] = useState("");
   const [showTypesafe, setShowTypesafe] = useState(false);
   const [showXai, setShowXai] = useState(false);
@@ -133,7 +135,9 @@ export function SettingsView() {
     setPrefsSaveMsg(null);
     void (async () => {
       try {
-        setTypesafeKey(readTypesafeKey());
+        const seeded = readTypesafeKey();
+        setTypesafeKey(seeded);
+        setTypesafeFilled(seeded.length > 0);
         setXaiKey(localStorage.getItem(LS_XAI) ?? "");
       } catch {
         /* ignore */
@@ -270,6 +274,7 @@ export function SettingsView() {
     Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
 
   async function saveWeeklyBudgetOnChain() {
+    if (predca.pendingSignature != null || predca.pendingSignatureNow()) return;
     writeWeeklyBudgetUsd(weekly, ownerBase58);
     predca.clearMessages();
     if (!connected || !predca.mint || !predca.config) return;
@@ -319,7 +324,9 @@ export function SettingsView() {
 
   function saveByok() {
     try {
-      localStorage.setItem(LS_TYPESAFE, typesafeKey.trim());
+      const nextTypesafe = typesafeKey.trim();
+      localStorage.setItem(LS_TYPESAFE, nextTypesafe);
+      setTypesafeFilled(nextTypesafe.length > 0);
       localStorage.setItem(LS_XAI, xaiKey.trim());
       writeExclusionsRaw(exclusions);
       writeDeadlineInvalid(deadlineInvalid);
@@ -469,7 +476,7 @@ export function SettingsView() {
         {budgetDirtyOnChain && connected && predca.mint ? (
           <button
             type="button"
-            disabled={predca.txPending}
+            disabled={predca.txPending || predca.pendingSignature != null}
             onClick={() => void saveWeeklyBudgetOnChain()}
             className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
           >
@@ -595,12 +602,18 @@ export function SettingsView() {
             localStorage
           </span>
         </div>
-        <p className="text-xs text-[#8b95a8]">{t("settings.byokIntro")}</p>
+        <p className="text-xs text-[#8b95a8]">
+          {t(typesafeFilled ? "settings.byokIntro" : "settings.byokIntroEmpty")}
+        </p>
 
         <label className="block space-y-1.5">
           <span className="text-[11px] text-[#c5cedb]">
             <span className="mono-num text-[#2dd4bf]">TYPESAFE_API_KEY</span>{" "}
-            {t("settings.typesafeLabel")}
+            {t(
+              typesafeFilled
+                ? "settings.typesafeLabel"
+                : "settings.typesafeLabelEmpty",
+            )}
           </span>
           <div className="flex gap-2">
             <input
