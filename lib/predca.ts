@@ -456,7 +456,7 @@ function mapCommonSolanaError(msg: string): string | null {
     return (
       `Niewystarczające środki (mock USDC). Potrzebujesz salda mock USDC ` +
       `(mint ${mintHint}) na Devnet w ATA portfela. ` +
-      `Utwórz ATA i zrób mint/airdrop testowych tokenów, potem Deposit.`
+      `Utwórz ATA i zrób mint/airdrop testowych tokenów, potem Wpłać.`
     );
   }
   if (
@@ -475,7 +475,7 @@ function mapCommonSolanaError(msg: string): string | null {
   if (/Simulation failed/i.test(msg) && /custom program error: 0x1\b/i.test(msg)) {
     return (
       `Niewystarczające saldo mock USDC w portfelu (mint ${mintHint}). ` +
-      `Doładuj ATA przed Deposit.`
+      `Doładuj ATA przed wpłatą.`
     );
   }
   return null;

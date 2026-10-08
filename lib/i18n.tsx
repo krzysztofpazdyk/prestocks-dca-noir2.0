@@ -41,8 +41,8 @@ const pl: Dict = {
 
   "overview.kicker": "Trading desk · PreStocks Weekly DCA",
   "overview.title": "Overview",
-  "overview.maxDepositHint": "Max depozyt: {amount} USDC (saldo portfela)",
-  "overview.maxWithdrawHint": "Max wypłata: {amount} USDC (saldo vaulta)",
+  "overview.maxDepositHint": "Maks. wpłata: {amount} USDC (saldo portfela)",
+  "overview.maxWithdrawHint": "Maks. wypłata: {amount} USDC (saldo vaulta)",
   "overview.disconnectedHint":
     "Portfel odłączony — podłącz wallet, by zobaczyć salda on-chain. {cluster}.",
   "overview.noMintHint":
@@ -57,7 +57,7 @@ const pl: Dict = {
   "faucet.button": "Weź 1000 USDC + 0.1 SOL (demo)",
   "faucet.busy": "Wysyłam USDC + SOL…",
   "faucet.success": "Wysłano 1000 USDC + 0.1 SOL do portfela (demo) · sig {sig}.",
-  "faucet.nextSteps": "Następnie: Deposit do vaulta (≥ budżet tygodniowy) + Wygeneruj rekomendacje — wtedy Dokonaj zakupu się odblokuje.",
+  "faucet.nextSteps": "Następnie: Wpłać do vaulta (≥ budżet tygodniowy) + Wygeneruj rekomendacje — wtedy Dokonaj zakupu się odblokuje.",
   "faucet.error": "Faucet: {error}",
   "faucet.needWallet": "Podłącz portfel, by wziąć demo USDC + SOL.",
 
@@ -67,15 +67,18 @@ const pl: Dict = {
   "predca.loading": "Ładowanie…",
   "predca.budget": "Budżet tygodniowy",
   "predca.vault": "Vault",
-  "predca.deposit": "Deposit",
-  "predca.withdraw": "Withdraw",
+  "predca.depositTitle": "Wpłata",
+  "predca.withdrawTitle": "Wypłata",
+  "predca.deposit": "Wpłać",
+  "predca.withdraw": "Wypłać",
+  "predca.rpcActionHint": "Nieaktywne — brak połączenia z RPC Devnet. Kliknij Odśwież.",
   "predca.hintNoAta":
-    "Hint: brak ATA mock USDC — Deposit zwykle się nie uda, dopóki nie masz konta tokenowego dla mint {mint} na Devnet.",
+    "Wskazówka: brak ATA mock USDC — Wpłata zwykle się nie uda, dopóki nie masz konta tokenowego dla mint {mint} na Devnet.",
   "predca.hintZeroUsdc":
-    "Hint: saldo mock USDC = 0 — doładuj ATA (mint {mint}) przed Deposit.",
+    "Wskazówka: saldo mock USDC = 0 — doładuj ATA (mint {mint}) przed wpłatą.",
   "predca.mintLabel": "Mint mock USDC:",
   "predca.mintNoAta":
-    "· Brak ATA / saldo — utwórz konto tokenowe i zrób mint testowych USDC na Devnet przed Deposit.",
+    "· Brak ATA / saldo — utwórz konto tokenowe i zrób mint testowych USDC na Devnet przed wpłatą.",
   "predca.initBudget": "Budżet tygodniowy (USDC)",
   "predca.initialize": "Initialize",
   "predca.waiting": "Czekam…",
@@ -84,7 +87,7 @@ const pl: Dict = {
   "predca.rentHint":
     "Hint: init tworzy UserConfig + vault ATA — potrzebujesz ~0.002–0.003 SOL na rent (opłata konta).",
   "predca.depositUnavailable":
-    "Deposit niedostępny ({reason}). Podłącz portfel z mintem USDC, by wpłacić.",
+    "Wpłata niedostępna ({reason}). Podłącz portfel z mintem USDC, by wpłacić.",
   "predca.status.loading": "ładowanie…",
   "predca.status.no_mint": "brak mint",
   "predca.status.disconnected": "brak portfela",
@@ -139,7 +142,7 @@ const pl: Dict = {
   "purchase.disabled.noRecs": "Zakup nieaktywny — najpierw kliknij Wygeneruj rekomendacje (top-3).",
   "purchase.disabled.notReady": "Zakup nieaktywny — najpierw wpłać USDC na Overview (konto powstaje z wpłatą).",
   "purchase.disabled.rpcError": "Zakup nieaktywny — brak połączenia z RPC Devnet. Kliknij Odśwież.",
-  "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Zrób Deposit z portfela (faucet zasila portfel, nie vault).",
+  "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Wpłać z portfela (faucet zasila portfel, nie vault).",
   "purchase.disabled.generic": "Zakup nieaktywny — sprawdź vault, ranking i status Predca.",
   "tx.recheck": "Sprawdź ponownie",
   "tx.rechecking": "Sprawdzam…",
@@ -332,8 +335,11 @@ const en: Dict = {
   "predca.loading": "Loading…",
   "predca.budget": "Weekly budget",
   "predca.vault": "Vault",
+  "predca.depositTitle": "Deposit",
+  "predca.withdrawTitle": "Withdraw",
   "predca.deposit": "Deposit",
   "predca.withdraw": "Withdraw",
+  "predca.rpcActionHint": "Inactive — no Devnet RPC connection. Click Refresh.",
   "predca.hintNoAta":
     "Hint: no mock USDC ATA — Deposit usually fails until you have a token account for mint {mint} on Devnet.",
   "predca.hintZeroUsdc":

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
@@ -16,6 +17,7 @@ import {
 import type { Predca } from "../types/predca";
 import {
   depositPlan,
+  depositUi,
   derivePredcaStatus,
   nextSnapshotAfterRefresh,
   withdrawUi,
@@ -197,6 +199,37 @@ test("withdraw stays disabled on a stale account and deposit does not init while
   assert.equal(depositPlan("unknown", null), "blocked");
   assert.equal(depositPlan("missing", null), "init_deposit");
   assert.equal(depositPlan("present", null), "deposit");
+});
+
+test("deposit stays visible but disabled on an RPC error and still refuses init", () => {
+  assert.equal(depositUi("error", true, true), "disabled");
+  assert.equal(depositUi("ready", true, true), "enabled");
+  assert.equal(depositUi("no_config", true, true), "enabled");
+  assert.equal(depositUi("loading", true, true), "hidden");
+  assert.equal(depositUi("ready", false, true), "hidden");
+  assert.equal(depositUi("ready", true, false), "hidden");
+  assert.equal(depositPlan("unknown", null), "blocked");
+  assert.equal(depositPlan("missing", "x"), "blocked");
+});
+
+test("the deposit tile stays mounted on an RPC error and does not enter the duplicate gate", () => {
+  const src = readFileSync(
+    new URL("../components/OverviewView.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(src, /depositPresentation !== "hidden"/);
+  const initAt = src.indexOf('t("predca.initHint")');
+  assert.ok(initAt > 0);
+  const initGuard = src.slice(Math.max(0, initAt - 900), initAt);
+  assert.match(initGuard, /canDeposit/);
+  assert.match(initGuard, /predca\.status === "no_config"/);
+  for (const name of ["submitDeposit", "submitWithdraw"]) {
+    const start = src.indexOf(`async function ${name}`);
+    const gate = src.indexOf("tryEnterDupCheck", start);
+    assert.ok(start > 0 && gate > start, name);
+    const head = src.slice(start, gate);
+    assert.match(head, /!== "enabled"\) return;/);
+  }
 });
 
 test("isMissingAccountError matches missing accounts and not transport or rate limits", () => {

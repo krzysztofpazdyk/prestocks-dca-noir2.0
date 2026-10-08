@@ -17,6 +17,7 @@ import {
   nextDuplicateStep,
   pendingLockHeld,
   tryEnterDupCheck,
+  visibleUnresolved,
   readPendingRecords,
   removePendingRecord,
   sameActionFamily,
@@ -322,6 +323,17 @@ test("auto-buy Off stays clickable while a transaction is pending", () => {
   assert.equal(autoToggleBlocked(false, true), false);
   assert.equal(autoToggleBlocked(true, true), true);
   assert.equal(autoToggleBlocked(true, false), false);
+});
+
+test("visibleUnresolved hides signatures that are still being checked", () => {
+  const a = rec({ signature: sig(1) });
+  const b = rec({ signature: sig(2) });
+  assert.deepEqual(visibleUnresolved([a, b], new Set([a.signature])), [b]);
+  assert.deepEqual(visibleUnresolved([a, b], new Set()), [a, b]);
+  assert.deepEqual(
+    visibleUnresolved([a, b], new Set([a.signature, b.signature])),
+    [],
+  );
 });
 
 test("tryEnterDupCheck lets the first click in and blocks the next until leave", () => {
