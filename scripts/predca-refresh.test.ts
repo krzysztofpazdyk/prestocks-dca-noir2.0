@@ -60,14 +60,44 @@ test("wallet change bumps both epochs before any refresh write", () => {
   assert.match(effect, /setPending\(null\)/);
   assert.match(effect, /setOkMsg\(null\)/);
   assert.match(effect, /reportError\(null\)/);
-  assert.match(effect, /setConfig\(null\)/);
-  assert.match(effect, /setVaultUsdc\(null\)/);
-  assert.match(effect, /setRuns\(\[\]\)/);
-  assert.match(effect, /setTokenBalances\(\[\]\)/);
+  // v4.30 stores the read in one snapshot. EMPTY_SNAPSHOT clears config, vault, runs, and tokens.
+  assert.match(effect, /setSnapshot\(EMPTY_SNAPSHOT\)/);
+  assert.match(effect, /setUnresolvedTxs\(\[\]\)/);
 
   const refreshFn = src.slice(refreshAt, src.indexOf("void refresh()"));
   assert.match(refreshFn, /refreshWriteStillCurrent\(/);
   const loadingOff = refreshFn.indexOf("setLoading(false)");
   assert.ok(loadingOff > 0);
   assert.match(refreshFn.slice(loadingOff - 40, loadingOff), /if \(!still\(\)\) return;/);
+});
+
+test("refresh marks sibling reads handled before fetchUserConfig", () => {
+  const src = readFileSync(
+    new URL("../lib/hooks/usePredca.ts", import.meta.url),
+    "utf8",
+  );
+  const refreshAt = src.indexOf("const refresh = useCallback");
+  const fetchAt = src.indexOf("await fetchUserConfig", refreshAt);
+  assert.ok(refreshAt > 0 && fetchAt > refreshAt);
+  const head = src.slice(refreshAt, fetchAt);
+  for (const name of ["solPromise", "ownerBalPromise", "tokensPromise"]) {
+    const decl = head.indexOf(`const ${name}`);
+    assert.ok(decl >= 0, name);
+    const after = head.slice(decl);
+    assert.match(after, new RegExp(`markHandled\\(${name}\\)|${name}\\.catch\\(`));
+  }
+});
+
+test("recheckUnresolved confirms from signature history without a vault wait", () => {
+  const src = readFileSync(
+    new URL("../lib/hooks/usePredca.ts", import.meta.url),
+    "utf8",
+  );
+  const start = src.indexOf("async function recheckUnresolved");
+  const end = src.indexOf("async function depositUsdc", start);
+  assert.ok(start > 0 && end > start);
+  const body = src.slice(start, end);
+  assert.match(body, /requireVaultIncrease:\s*false/);
+  assert.doesNotMatch(body, /isPrivy/);
+  assert.match(body, /vaultBefore:\s*null/);
 });

@@ -63,6 +63,9 @@ export function HistoryView() {
       </div>
 
       {predca.error && <TxNotice message={predca.error} tone="error" />}
+      {predca.status === "error" && predca.rpcError ? (
+        <TxNotice message={predca.rpcError} tone="error" />
+      ) : null}
 
       {!connected && (
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">

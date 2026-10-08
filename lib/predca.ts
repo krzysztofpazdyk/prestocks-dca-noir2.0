@@ -215,17 +215,28 @@ export type RunRecordData = {
   bump: number;
 };
 
+const MISSING_ACCOUNT_RE =
+  /could not find account|Account does not exist|has no data|Invalid param: could not find/i;
+
+/** True only for a missing account. RPC and rate-limit failures stay false. */
+export function isMissingAccountError(e: unknown): boolean {
+  const message =
+    e instanceof Error
+      ? e.message
+      : e && typeof e === "object" && "message" in e
+        ? String((e as { message?: unknown }).message ?? "")
+        : "";
+  return MISSING_ACCOUNT_RE.test(`${message}\n${String(e)}`);
+}
+
 export async function fetchUserConfig(
   program: Program<Predca>,
   owner: PublicKey,
 ): Promise<UserConfigData | null> {
   const [pda] = userConfigPda(owner);
-  try {
-    const acc = await program.account.userConfig.fetch(pda);
-    return acc as unknown as UserConfigData;
-  } catch {
-    return null;
-  }
+  const acc = await program.account.userConfig.fetchNullable(pda);
+  if (!acc) return null;
+  return acc as unknown as UserConfigData;
 }
 
 export async function fetchVaultBalance(
@@ -236,6 +247,19 @@ export async function fetchVaultBalance(
   try {
     const bal = await connection.getTokenAccountBalance(vault);
     return Number(bal.value.uiAmountString ?? bal.value.uiAmount ?? 0);
+  } catch (e) {
+    if (isMissingAccountError(e)) return null;
+    throw e;
+  }
+}
+
+/** Vault read that never throws. A failed read is "unknown", not zero. */
+export async function readVaultOrNull(
+  connection: Connection,
+  owner: PublicKey,
+): Promise<number | null> {
+  try {
+    return await fetchVaultBalance(connection, owner);
   } catch {
     return null;
   }
@@ -251,8 +275,9 @@ export async function fetchOwnerUsdcBalance(
   try {
     const bal = await connection.getTokenAccountBalance(ata);
     return Number(bal.value.uiAmountString ?? bal.value.uiAmount ?? 0);
-  } catch {
-    return null;
+  } catch (e) {
+    if (isMissingAccountError(e)) return null;
+    throw e;
   }
 }
 
@@ -462,12 +487,8 @@ export async function fetchSolBalance(
   connection: Connection,
   owner: PublicKey,
 ): Promise<number | null> {
-  try {
-    const lamports = await connection.getBalance(owner);
-    return lamports / 1_000_000_000;
-  } catch {
-    return null;
-  }
+  const lamports = await connection.getBalance(owner);
+  return lamports / 1_000_000_000;
 }
 
 export type MockTokenBalance = {
@@ -504,8 +525,9 @@ export async function fetchMockTokenBalances(
           bal.value.uiAmountString ?? bal.value.uiAmount ?? Number(raw) / 1e6,
         );
         out.push({ name, mint, amount, raw });
-      } catch {
-        // ATA missing
+      } catch (e) {
+        if (isMissingAccountError(e)) return;
+        throw e;
       }
     }),
   );

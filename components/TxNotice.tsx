@@ -31,20 +31,32 @@ export function TxNotice({
   message,
   tone,
   className = "",
+  action,
 }: {
   message: string;
   tone: "pending" | "error";
   className?: string;
+  action?: { label: string; onClick: () => void; disabled?: boolean };
 }) {
   const toneClass =
     tone === "pending"
       ? "border-[#fbbf2433] bg-[#fbbf2411] text-[#fbbf24]"
       : "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]";
   return (
-    <p
+    <div
       className={`break-all rounded border px-3 py-2 text-xs ${toneClass} ${className}`}
     >
-      {txMessageWithLink(message)}
-    </p>
+      <p>{txMessageWithLink(message)}</p>
+      {action ? (
+        <button
+          type="button"
+          onClick={action.onClick}
+          disabled={action.disabled}
+          className="mt-2 rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider disabled:opacity-40"
+        >
+          {action.label}
+        </button>
+      ) : null}
+    </div>
   );
 }
