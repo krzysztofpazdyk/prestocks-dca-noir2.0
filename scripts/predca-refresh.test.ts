@@ -88,6 +88,44 @@ test("refresh marks sibling reads handled before fetchUserConfig", () => {
   }
 });
 
+test("a restored session hides unresolved notes until each signature is checked", () => {
+  const src = readFileSync(
+    new URL("../lib/hooks/usePredca.ts", import.meta.url),
+    "utf8",
+  );
+  const restoreAt = src.indexOf("restoreRef.current = async");
+  const restoreEnd = src.indexOf("async function recheckUnresolved", restoreAt);
+  assert.ok(restoreAt > 0 && restoreEnd > restoreAt);
+  const restore = src.slice(restoreAt, restoreEnd);
+  const arm = restore.indexOf("setSessionChecking(");
+  const sync = restore.indexOf("syncUnresolved(records)");
+  assert.ok(arm >= 0 && sync > arm);
+  const settleAt = restore.indexOf("settleRecord(");
+  const tryAt = restore.lastIndexOf("try {", settleAt);
+  const finallyAt = restore.indexOf("finally", settleAt);
+  assert.ok(tryAt >= 0 && tryAt < settleAt && finallyAt > settleAt);
+  const fin = restore.slice(finallyAt, finallyAt + 280);
+  assert.match(fin, /setSessionChecking/);
+  assert.match(fin, /delete\(rec\.signature\)/);
+
+  const effectAt = src.indexOf("const prev = seenOwnerKey.current");
+  const refreshAt = src.indexOf("const refresh = useCallback");
+  assert.match(src.slice(effectAt, refreshAt), /setSessionChecking\(new Set\(\)\)/);
+
+  const ov = readFileSync(
+    new URL("../components/OverviewView.tsx", import.meta.url),
+    "utf8",
+  );
+  const sv = readFileSync(
+    new URL("../components/SettingsView.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.equal(ov.includes("predca.unresolvedTxs.slice("), false);
+  assert.equal(sv.includes("predca.unresolvedTxs.slice("), false);
+  assert.match(ov, /visibleUnresolvedTxs\.slice\(/);
+  assert.match(sv, /visibleUnresolvedTxs\.slice\(/);
+});
+
 test("recheckUnresolved confirms from signature history without a vault wait", () => {
   const src = readFileSync(
     new URL("../lib/hooks/usePredca.ts", import.meta.url),

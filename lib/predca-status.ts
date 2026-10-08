@@ -91,6 +91,20 @@ export function depositPlan(
   return "blocked";
 }
 
+export type DepositUi = "enabled" | "disabled" | "hidden";
+
+/** Deposit tile. An RPC error stays visible and disabled, including an unknown account. */
+export function depositUi(
+  status: PredcaStatus,
+  connected: boolean,
+  hasMint: boolean,
+): DepositUi {
+  if (!connected || !hasMint) return "hidden";
+  if (status === "ready" || status === "no_config") return "enabled";
+  if (status === "error") return "disabled";
+  return "hidden";
+}
+
 export type WithdrawUi = "enabled" | "disabled" | "hidden";
 
 export function withdrawUi(

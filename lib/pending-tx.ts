@@ -275,3 +275,11 @@ export function tryEnterDupCheck(gate: DupCheckGate): boolean {
 export function leaveDupCheck(gate: DupCheckGate): void {
   gate.current = false;
 }
+
+/** Hide records whose signature is still being checked after a refresh. Order stays. */
+export function visibleUnresolved(
+  list: PendingTxRecord[],
+  checking: ReadonlySet<string>,
+): PendingTxRecord[] {
+  return list.filter((row) => !checking.has(row.signature));
+}

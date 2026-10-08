@@ -44,6 +44,7 @@ import {
   removePendingRecord,
   sameActionFamily,
   signatureStatusDeps,
+  visibleUnresolved,
   writePendingRecord,
   DUPLICATE_GUARD_KINDS,
   type PendingTxKind,
@@ -270,6 +271,9 @@ function usePredcaImpl() {
     verdict: PendingVerdict;
   } | null>(null);
   const [sessionCheckMsg, setSessionCheckMsg] = useState<string | null>(null);
+  const [sessionChecking, setSessionChecking] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollStartedRef = useRef<Map<string, number>>(new Map());
   const restoreRef = useRef<
@@ -338,6 +342,7 @@ function usePredcaImpl() {
     setSnapshot(EMPTY_SNAPSHOT);
     unresolvedRef.current = [];
     setUnresolvedTxs([]);
+    setSessionChecking(new Set());
     setLastVerdict(null);
     setSessionCheckMsg(null);
     pollStartedRef.current.clear();
@@ -1050,17 +1055,26 @@ function usePredcaImpl() {
         pollStartedRef.current.set(rec.signature, Date.now());
       }
     }
+    setSessionChecking(new Set(records.map((r) => r.signature)));
     syncUnresolved(records);
     schedulePoll();
     for (const rec of records) {
       if (isCancelled() || (ownerRef.current?.toBase58() ?? null) !== ownerAtStart) return;
-      await settleRecord(rec, {
-        epoch: vaultFollowEpoch.current,
-        success: successForRecord(rec),
-        requireVaultIncrease: false,
-        vaultBefore: null,
-        fromSession: true,
-      });
+      try {
+        await settleRecord(rec, {
+          epoch: vaultFollowEpoch.current,
+          success: successForRecord(rec),
+          requireVaultIncrease: false,
+          vaultBefore: null,
+          fromSession: true,
+        });
+      } finally {
+        setSessionChecking((prev) => {
+          const next = new Set(prev);
+          next.delete(rec.signature);
+          return next;
+        });
+      }
     }
     if (!isCancelled() && (ownerRef.current?.toBase58() ?? null) === ownerAtStart) {
       setSessionCheckMsg(null);
@@ -1189,7 +1203,7 @@ function usePredcaImpl() {
     }
     if (!config) {
       reportError(
-        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
+        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Wpłać) — init + deposit w jednej tx.",
       );
       return null;
     }
@@ -1266,7 +1280,7 @@ function usePredcaImpl() {
     }
     if (!config) {
       reportError(
-        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
+        "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Wpłać) — init + deposit w jednej tx.",
       );
       return null;
     }
@@ -1293,7 +1307,7 @@ function usePredcaImpl() {
       const freshConfig = await fetchUserConfig(program, owner);
       if (!freshConfig) {
         reportError(
-          "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Deposit) — init + deposit w jednej tx.",
+          "Predca nie jest zainicjalizowane. Zrób pierwszą wpłatę (Wpłać) — init + deposit w jednej tx.",
         );
         return null;
       }
@@ -1430,6 +1444,7 @@ function usePredcaImpl() {
     configState,
     rpcError,
     unresolvedTxs,
+    visibleUnresolvedTxs: visibleUnresolved(unresolvedTxs, sessionChecking),
     recheckUnresolved,
     rechecking,
     unresolvedFor: (kind: PendingTxKind) => {

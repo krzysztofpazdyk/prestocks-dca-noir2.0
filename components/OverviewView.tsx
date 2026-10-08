@@ -24,7 +24,7 @@ import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
-import { withdrawUi } from "@/lib/predca-status";
+import { depositUi, withdrawUi } from "@/lib/predca-status";
 import {
   FAILED_EXPIRED_MSG,
   UNRESOLVED_MSG,
@@ -308,6 +308,7 @@ export function OverviewView() {
   }
 
   async function submitDeposit(acknowledged = false) {
+    if (depositPresentation !== "enabled") return;
     if (predca.pendingSignatureNow()) return;
     if (!tryEnterDupCheck(dupCheckRef)) return;
     setDupChecking(true);
@@ -326,6 +327,7 @@ export function OverviewView() {
   }
 
   async function submitWithdraw(acknowledged = false) {
+    if (withdrawPresentation !== "enabled") return;
     if (predca.pendingSignatureNow()) return;
     if (!tryEnterDupCheck(dupCheckRef)) return;
     setDupChecking(true);
@@ -341,6 +343,8 @@ export function OverviewView() {
   }
 
   function dupNotice(kind: "deposit" | "withdraw" | "buy", amount: number) {
+    if (kind === "deposit" && depositPresentation === "disabled") return null;
+    if (kind === "withdraw" && withdrawPresentation === "disabled") return null;
     if (dupWarn?.kind !== kind || dupWarn.amount !== amount) return null;
     if (!predca.unresolvedFor(kind)) return null;
     const action =
@@ -506,10 +510,8 @@ export function OverviewView() {
     }
   }
 
-  const canDeposit =
-    connected &&
-    !!predca.mint &&
-    (predca.status === "ready" || predca.status === "no_config");
+  const depositPresentation = depositUi(predca.status, connected, !!predca.mint);
+  const canDeposit = depositPresentation === "enabled";
   const ownerUsdcCap =
     displayOwnerUsdc != null && Number.isFinite(displayOwnerUsdc)
       ? displayOwnerUsdc
@@ -702,10 +704,17 @@ export function OverviewView() {
                 : "USDC"
             }
           />
-          {canDeposit && (
-            <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
+          {depositPresentation !== "hidden" && (
+            <div
+              className="rounded border border-[#1e2633] bg-[#0c0e12] p-3"
+              title={
+                depositPresentation === "disabled"
+                  ? t("predca.rpcActionHint")
+                  : undefined
+              }
+            >
               <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
-                {t("predca.deposit")}
+                {t("predca.depositTitle")}
               </p>
               <div className="mt-2 flex items-end gap-2">
                 <input
@@ -741,13 +750,25 @@ export function OverviewView() {
                   {t("predca.deposit")}
                 </button>
               </div>
+              {depositPresentation === "disabled" ? (
+                <p className="mt-2 text-[10px] text-[#8b95a8]">
+                  {t("predca.rpcActionHint")}
+                </p>
+              ) : null}
               {dupNotice("deposit", ownerUsdcCap != null ? Math.min(depositAmt, ownerUsdcCap) : depositAmt)}
             </div>
           )}
           {showWithdraw && (
-            <div className="rounded border border-[#1e2633] bg-[#0c0e12] p-3">
+            <div
+              className="rounded border border-[#1e2633] bg-[#0c0e12] p-3"
+              title={
+                withdrawPresentation === "disabled"
+                  ? t("predca.rpcActionHint")
+                  : undefined
+              }
+            >
               <p className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
-                {t("predca.withdraw")}
+                {t("predca.withdrawTitle")}
               </p>
               <div className="mt-2 flex items-end gap-2">
                 <input
@@ -787,6 +808,11 @@ export function OverviewView() {
                   {t("predca.withdraw")}
                 </button>
               </div>
+              {withdrawPresentation === "disabled" ? (
+                <p className="mt-2 text-[10px] text-[#8b95a8]">
+                  {t("predca.rpcActionHint")}
+                </p>
+              ) : null}
               {dupNotice(
                 "withdraw",
                 vaultUsdcCap != null ? Math.min(withdrawAmt, vaultUsdcCap) : withdrawAmt,
@@ -839,7 +865,7 @@ export function OverviewView() {
         {predca.sessionCheckMsg ? (
           <TxNotice message={predca.sessionCheckMsg} tone="pending" className="mt-3" />
         ) : null}
-        {predca.unresolvedTxs.slice(0, 2).map((rec) => (
+        {predca.visibleUnresolvedTxs.slice(0, 2).map((rec) => (
           <TxNotice
             key={rec.signature}
             message={`${UNRESOLVED_MSG} ${rec.signature} ${explorerTxUrl(rec.signature)}`}
@@ -854,9 +880,9 @@ export function OverviewView() {
             }}
           />
         ))}
-        {predca.unresolvedTxs.length > 2 ? (
+        {predca.visibleUnresolvedTxs.length > 2 ? (
           <p className="mt-1 text-[10px] text-[#fbbf24]">
-            +{predca.unresolvedTxs.length - 2}
+            +{predca.visibleUnresolvedTxs.length - 2}
           </p>
         ) : null}
         {predca.pendingMsg && (

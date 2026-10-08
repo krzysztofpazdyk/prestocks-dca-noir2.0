@@ -358,7 +358,7 @@ export function SettingsView() {
       {predca.sessionCheckMsg ? (
         <TxNotice message={predca.sessionCheckMsg} tone="pending" />
       ) : null}
-      {predca.unresolvedTxs.slice(0, 2).map((rec) => (
+      {predca.visibleUnresolvedTxs.slice(0, 2).map((rec) => (
         <TxNotice
           key={rec.signature}
           tone="pending"
@@ -372,8 +372,8 @@ export function SettingsView() {
           }}
         />
       ))}
-      {predca.unresolvedTxs.length > 2 ? (
-        <p className="text-[10px] text-[#fbbf24]">+{predca.unresolvedTxs.length - 2}</p>
+      {predca.visibleUnresolvedTxs.length > 2 ? (
+        <p className="text-[10px] text-[#fbbf24]">+{predca.visibleUnresolvedTxs.length - 2}</p>
       ) : null}
       {predca.pendingMsg && (
         <TxNotice message={predca.pendingMsg} tone="pending" />
