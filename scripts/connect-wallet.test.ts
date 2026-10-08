@@ -337,6 +337,92 @@ test("Phantom or Solflare switch ends a Privy session; picking Privy keeps it", 
   );
 });
 
+test("afterConnected runs only once the target is connected, then a wipe is repaired", async () => {
+  const state: Sim = {
+    selectedName: "Privy",
+    connected: true,
+    connecting: false,
+    disconnecting: false,
+    targetReady: true,
+  };
+  const order: string[] = [];
+  let hooks = 0;
+  const sim = virtualRuntime(state, {
+    onDisconnect: () => {
+      order.push("disconnect");
+      state.connected = false;
+    },
+    onSelect: (name) => {
+      order.push(name == null ? "clear" : `select:${name}`);
+      state.selectedName = name;
+    },
+    onConnect: () => {
+      order.push("connect");
+      if (state.selectedName === "Phantom") state.connected = true;
+    },
+  });
+  sim.rt.target = "Phantom";
+  sim.rt.afterConnected = async () => {
+    hooks += 1;
+    order.push("logout");
+    assert.equal(state.connected, true);
+    assert.equal(state.selectedName, "Phantom");
+    state.selectedName = null;
+    state.connected = false;
+  };
+  await runConnectJob(sim.rt);
+  assert.equal(hooks, 1);
+  assert.equal(state.connected, true);
+  assert.equal(state.selectedName, "Phantom");
+  const logoutAt = order.indexOf("logout");
+  const firstConnect = order.indexOf("connect");
+  assert.ok(firstConnect >= 0 && logoutAt > firstConnect);
+  assert.equal(order.filter((item) => item === "logout").length, 1);
+  assert.equal(order.filter((item) => item === "connect").length, 2);
+  assert.ok(order.indexOf("disconnect") < firstConnect);
+});
+
+test("afterConnected failure still leaves the connected target", async () => {
+  const state: Sim = {
+    selectedName: "Phantom",
+    connected: true,
+    connecting: false,
+    disconnecting: false,
+    targetReady: true,
+  };
+  const sim = virtualRuntime(state);
+  sim.rt.target = "Phantom";
+  sim.rt.afterConnected = async () => {
+    throw new Error("logout down");
+  };
+  await runConnectJob(sim.rt);
+  assert.equal(state.connected, true);
+  assert.equal(state.selectedName, "Phantom");
+});
+
+test("plain connect does not need afterConnected", async () => {
+  const state: Sim = {
+    selectedName: null,
+    connected: false,
+    connecting: false,
+    disconnecting: false,
+    targetReady: true,
+  };
+  const sim = virtualRuntime(state, {
+    onSelect: (name) => {
+      state.selectedName = name;
+    },
+    onConnect: () => {
+      state.connected = true;
+    },
+  });
+  sim.rt.target = "Phantom";
+  await runConnectJob(sim.rt);
+  assert.equal(sim.connects, 1);
+  assert.equal(state.selectedName, "Phantom");
+  assert.equal(sim.rt.afterConnected, undefined);
+});
+
 test("wallet rejection surfaces instead of a timeout", async () => {
   const state: Sim = {
     selectedName: "Phantom",

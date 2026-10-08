@@ -14,8 +14,14 @@
  * 2. `select(target)` only once the previous name is gone and the target is ready,
  * 3. `connect()` only after the selected name matches the target.
  * If a late disconnect wipes the new name, select the target again.
+ * Privy `logout()` runs only after that connect has settled (`afterConnected`),
+ * and the loop stays up so a logout wipe is selected again. Logging out first
+ * lets the old adapter clear the new name before this loop is watching.
  * `autoConnect` stays false — this helper never connects by itself.
  */
+
+/** Cap a post-connect Privy logout so a hung session cannot hold "Łączenie…". */
+export const CONNECT_LOGOUT_RACE_MS = 3_000;
 export type ConnectPhase = "disconnect" | "select" | "connect";
 export type ConnectStep = "wait" | "clear" | "select" | "connect" | "done";
 
@@ -112,6 +118,12 @@ export type ConnectRuntime = {
   disconnectAdapter: () => Promise<void>;
   select: (name: string | null) => void;
   connect: () => Promise<void>;
+  /**
+   * Once, after `target` is connected and before the job returns.
+   * Used for Privy `logout()` so the switch settles first.
+   * A throw is ignored. A wipe here is repaired; the hook does not run again.
+   */
+  afterConnected?: () => Promise<void>;
 };
 
 /**
@@ -124,6 +136,7 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
   const started = rt.now();
   let phase: ConnectPhase = "disconnect";
   let promptedAt: number | null = null;
+  let ranAfterConnected = false;
 
   while (!rt.isCancelled()) {
     const state = rt.getState();
@@ -136,7 +149,21 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
       disconnecting: state.disconnecting,
       targetReady: state.targetReady,
     });
-    if (step === "done") return;
+    if (step === "done") {
+      if (!ranAfterConnected && rt.afterConnected) {
+        ranAfterConnected = true;
+        try {
+          await rt.afterConnected();
+        } catch {
+          // The new wallet is already connected. Logout must not fail the switch.
+        }
+        if (rt.isCancelled()) return;
+        // A disconnect event can land just after logout resolves.
+        await rt.sleep(200);
+        continue;
+      }
+      return;
+    }
 
     const now = rt.now();
     const limit =
