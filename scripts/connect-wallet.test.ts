@@ -4,9 +4,12 @@ import {
   adapterHasAccount,
   CONNECT_STALL_MS,
   ConnectTimeoutError,
+  createOnceTask,
+  externalWalletChoiceEndsPrivy,
   nextConnectStep,
   runConnectJob,
   shouldEndPrivySession,
+  walletButtonLabel,
   type ConnectRuntime,
 } from "../lib/connect-wallet";
 
@@ -421,6 +424,90 @@ test("plain connect does not need afterConnected", async () => {
   assert.equal(sim.connects, 1);
   assert.equal(state.selectedName, "Phantom");
   assert.equal(sim.rt.afterConnected, undefined);
+});
+
+test("Phantom and Solflare end Privy; Privy and a closed picker do not", () => {
+  assert.equal(externalWalletChoiceEndsPrivy("Phantom"), true);
+  assert.equal(externalWalletChoiceEndsPrivy("Solflare"), true);
+  assert.equal(externalWalletChoiceEndsPrivy("Privy"), false);
+  assert.equal(externalWalletChoiceEndsPrivy(null), false);
+});
+
+test("one external click logs out once across success, rejection, timeout, and cancel", async () => {
+  let calls = 0;
+  const task = createOnceTask(async () => {
+    calls += 1;
+  });
+  await task.start();
+  await task.start();
+  task.start();
+  await task.start();
+  assert.equal(calls, 1);
+  assert.equal(task.hasStarted(), true);
+});
+
+test("approved address stays put while connecting is still set or the link flickers", () => {
+  const label = (over: Partial<Parameters<typeof walletButtonLabel>[0]> = {}) =>
+    walletButtonLabel({
+      dropped: false,
+      busy: true,
+      connected: true,
+      address: "US51…ELFx",
+      pinnedAddress: "US51…ELFx",
+      connectingLabel: "Łączenie…",
+      selectLabel: "Zaloguj",
+      ...over,
+    });
+  assert.equal(label(), "US51…ELFx");
+  assert.equal(label({ connected: false, address: "" }), "US51…ELFx");
+  assert.equal(
+    label({
+      connected: false,
+      address: "",
+      pinnedAddress: null,
+    }),
+    "Łączenie…",
+  );
+  assert.equal(label({ dropped: true }), "Zaloguj");
+  assert.equal(
+    label({
+      busy: false,
+      connected: false,
+      address: "",
+      pinnedAddress: null,
+    }),
+    "Zaloguj",
+  );
+});
+
+test("rejected connect does not run the post-connect logout hook", async () => {
+  const state: Sim = {
+    selectedName: "Phantom",
+    connected: false,
+    connecting: false,
+    disconnecting: false,
+    targetReady: true,
+  };
+  let hooks = 0;
+  const sim = virtualRuntime(state);
+  sim.rt.target = "Phantom";
+  sim.rt.select = (name) => {
+    state.selectedName = name;
+  };
+  sim.rt.afterConnected = async () => {
+    hooks += 1;
+  };
+  sim.rt.connect = async () => {
+    const error = new Error("User rejected the request.");
+    error.name = "WalletConnectionError";
+    throw error;
+  };
+  await assert.rejects(runConnectJob(sim.rt), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.name, "WalletConnectionError");
+    return true;
+  });
+  assert.equal(hooks, 0);
 });
 
 test("wallet rejection surfaces instead of a timeout", async () => {

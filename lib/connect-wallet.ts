@@ -70,10 +70,10 @@ export function nextConnectStep(input: {
 }
 
 /**
- * End the Privy auth session when the user leaves it.
- * Disconnect does this if Privy is the active adapter or a session is still
- * open in the background. Picking Phantom or Solflare does the same.
- * Picking Privy again keeps the session. No second logout button.
+ * Disconnect (`nextName == null`) ends a Privy session that is still open.
+ * Picking Privy does not. Phantom and Solflare return true when a session
+ * exists; the click itself always logs out — see
+ * {@link externalWalletChoiceEndsPrivy}. No second logout button.
  */
 export function shouldEndPrivySession(input: {
   /** null = Disconnect. Otherwise the wallet the user just picked. */
@@ -88,6 +88,59 @@ export function shouldEndPrivySession(input: {
   if (!hasSession) return false;
   if (input.nextName == null) return true;
   return input.nextName === "Phantom" || input.nextName === "Solflare";
+}
+
+/**
+ * A Phantom or Solflare click ends Privy even when no session was visible,
+ * so the next Privy login always needs a new OTP.
+ * Picking Privy, or dismissing the picker (`null`), does not.
+ */
+export function externalWalletChoiceEndsPrivy(name: string | null): boolean {
+  return name === "Phantom" || name === "Solflare";
+}
+
+/** Header label. A shown or pinned address beats the connecting text. */
+export function walletButtonLabel(input: {
+  dropped: boolean;
+  busy: boolean;
+  connected: boolean;
+  address: string;
+  pinnedAddress: string | null;
+  connectingLabel: string;
+  selectLabel: string;
+}): string {
+  if (input.dropped) return input.selectLabel;
+  if (input.connected && input.address) return input.address;
+  if (input.pinnedAddress) return input.pinnedAddress;
+  if (input.busy) return input.connectingLabel;
+  return input.selectLabel;
+}
+
+/**
+ * One Privy logout for a single Phantom/Solflare click.
+ * Success, rejection, timeout, and cancel all call {@link OnceTask.start}.
+ */
+export type OnceTask = {
+  start: () => Promise<void>;
+  hasStarted: () => boolean;
+};
+
+export function createOnceTask(run: () => Promise<void> | void): OnceTask {
+  let started = false;
+  let pending: Promise<void> | null = null;
+  return {
+    hasStarted: () => started,
+    start: () => {
+      if (!pending) {
+        started = true;
+        pending = Promise.resolve()
+          .then(() => run())
+          .then(() => undefined)
+          .catch(() => undefined);
+      }
+      return pending;
+    },
+  };
 }
 
 /** Privy's standard `connect()` only returns accounts it already has. */
@@ -119,9 +172,11 @@ export type ConnectRuntime = {
   select: (name: string | null) => void;
   connect: () => Promise<void>;
   /**
-   * Once, after `target` is connected and before the job returns.
-   * Used for Privy `logout()` so the switch settles first.
+   * Once, after `target` is connected. The header already shows that address.
+   * Privy `logout()` belongs here so it does not run before the switch settles.
    * A throw is ignored. A wipe here is repaired; the hook does not run again.
+   * Rejection, timeout, and cancel do not reach this hook — the caller logs
+   * out on those paths with the same {@link OnceTask}.
    */
   afterConnected?: () => Promise<void>;
 };
@@ -203,6 +258,12 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
       await rt.connect();
     } catch (error) {
       if (rt.isCancelled()) return;
+      // The first connect's rejection is the user's. After logout, a wipe
+      // can make the repair connect throw; keep trying until the stall timer.
+      if (ranAfterConnected) {
+        await rt.sleep(50);
+        continue;
+      }
       throw error;
     }
     if (rt.isCancelled()) return;

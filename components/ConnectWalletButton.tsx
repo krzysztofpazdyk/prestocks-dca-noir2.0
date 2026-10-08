@@ -16,8 +16,12 @@ import {
   CONNECT_LOGOUT_RACE_MS,
   CONNECT_PROMPT_MS,
   ConnectTimeoutError,
+  createOnceTask,
+  externalWalletChoiceEndsPrivy,
   runConnectJob,
   shouldEndPrivySession,
+  walletButtonLabel,
+  type OnceTask,
 } from "@/lib/connect-wallet";
 import { clearStatusAuthCache } from "@/lib/keeper-client";
 import { privyAppId } from "@/lib/privy-devnet";
@@ -33,8 +37,8 @@ const SOLFLARE = "Solflare";
 type Job = {
   id: number;
   target: string;
-  /** Privy logout, only after this target has connected. */
-  afterConnected?: () => Promise<void>;
+  /** One logout for this Phantom/Solflare click. Absent for Privy. */
+  endPrivy?: OnceTask;
 };
 
 function raceLogout(run: () => Promise<void>): Promise<void> {
@@ -79,6 +83,11 @@ function useConnectJob() {
   // Header treats this as logged out before `useWallet().connected` flips.
   // Do not clear it when `connected` is still true — that undoes Rozłącz.
   const [dropped, setDropped] = useState(false);
+  // Address kept while a background Privy logout briefly clears `connected`.
+  const [pinnedAddress, setPinnedAddress] = useState<string | null>(null);
+  const pinnedRef = useRef<string | null>(null);
+  const pinTargetRef = useRef<string | null>(null);
+  const endPrivyRef = useRef<OnceTask | null>(null);
   const walletRef = useRef(wallet);
   const walletsRef = useRef(wallets);
   const connectedRef = useRef(connected);
@@ -103,32 +112,48 @@ function useConnectJob() {
   const fail = useCallback((message: string) => {
     setJob(null);
     setBusy(false);
+    // The address is already on screen. A later repair failure must not
+    // replace it with "Łączenie…" or an error dialog.
+    if (pinnedRef.current) return;
     setError(message);
+    pinTargetRef.current = null;
+    setPinnedAddress(null);
   }, []);
 
-  const requestConnect = useCallback(
-    (target: string, afterConnected?: () => Promise<void>) => {
-      setDropped(false);
-      setError(null);
-      // Same adapter and nothing to finish afterward: already settled.
-      // A logout hook still goes through the job so a wipe can be repaired.
-      if (
-        !afterConnected &&
-        connectedRef.current &&
-        walletRef.current?.adapter.name === target
-      ) {
-        setBusy(false);
-        setJob(null);
-        return;
-      }
-      const id = Date.now() + Math.floor(Math.random() * 1000);
-      setBusy(true);
-      setJob({ id, target, afterConnected });
-    },
-    [],
-  );
+  const requestConnect = useCallback((target: string, endPrivy?: OnceTask) => {
+    const previous = endPrivyRef.current;
+    if (previous && previous !== endPrivy && !previous.hasStarted()) {
+      void previous.start();
+    }
+    endPrivyRef.current = endPrivy ?? null;
+    setDropped(false);
+    setError(null);
+    pinnedRef.current = null;
+    setPinnedAddress(null);
+    pinTargetRef.current = target;
+    // Same adapter and nothing to finish afterward: already settled.
+    // A Phantom/Solflare logout still goes through the job so a wipe
+    // can be repaired after the address is on screen.
+    if (
+      !endPrivy &&
+      connectedRef.current &&
+      walletRef.current?.adapter.name === target
+    ) {
+      setBusy(false);
+      setJob(null);
+      return;
+    }
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setBusy(true);
+    setJob({ id, target, endPrivy });
+  }, []);
 
-  const cancel = useCallback(() => {
+  const cancel = useCallback((endPrivy?: boolean) => {
+    if (endPrivy) void endPrivyRef.current?.start();
+    if (!pinnedRef.current) {
+      pinTargetRef.current = null;
+      setPinnedAddress(null);
+    }
     setJob(null);
     setBusy(false);
     setError(null);
@@ -137,6 +162,9 @@ function useConnectJob() {
   const clearError = useCallback(() => setError(null), []);
 
   const disconnect = useCallback(async () => {
+    pinnedRef.current = null;
+    pinTargetRef.current = null;
+    setPinnedAddress(null);
     setDropped(true);
     selectRef.current(null);
     clearStatusAuthCache();
@@ -147,10 +175,22 @@ function useConnectJob() {
     }
   }, [walletDisconnect]);
 
+  // As soon as the chosen wallet is connected, drop "Łączenie…" and remember
+  // the address. A later Privy logout must not put the connecting label back.
+  useEffect(() => {
+    if (dropped || !connected || !publicKey) return;
+    if ((wallet?.adapter.name ?? null) !== pinTargetRef.current) return;
+    const next = shortPk(publicKey);
+    pinnedRef.current = next;
+    setPinnedAddress(next);
+    setBusy(false);
+  }, [connected, publicKey, wallet, dropped]);
+
   useEffect(() => {
     if (!job) return;
     const jobId = job.id;
     const target = job.target;
+    const endPrivy = job.endPrivy;
     let cancelled = false;
 
     // Backstop for a connect() promise that never settles (wallet popup or
@@ -164,6 +204,7 @@ function useConnectJob() {
         return;
       }
       cancelled = true;
+      void endPrivy?.start();
       fail(tRef.current("connect.timeout"));
     }, CONNECT_PROMPT_MS);
 
@@ -201,7 +242,7 @@ function useConnectJob() {
         selectRef.current(name == null ? null : (name as WalletName));
       },
       connect: () => connectRef.current(),
-      afterConnected: job.afterConnected,
+      afterConnected: endPrivy ? () => endPrivy.start() : undefined,
     })
       .then(() => {
         if (cancelled || jobRef.current?.id !== jobId) return;
@@ -210,6 +251,7 @@ function useConnectJob() {
       })
       .catch((err: unknown) => {
         if (cancelled || jobRef.current?.id !== jobId) return;
+        void endPrivy?.start();
         fail(connectFailureMessage(err, tRef.current));
       });
 
@@ -227,12 +269,19 @@ function useConnectJob() {
     publicKey,
     busy,
     dropped,
+    pinnedAddress,
     error,
     requestConnect,
     cancel,
     disconnect,
     clearError,
     fail,
+    /** Starts the Phantom/Solflare logout if this click has not logged out yet. */
+    takeArmedLogout: () => {
+      const armed = endPrivyRef.current;
+      if (!armed || armed.hasStarted()) return null;
+      return armed.start();
+    },
   };
 }
 
@@ -276,10 +325,10 @@ type PrivyUi = {
   onPick: () => "login" | "connect";
   onLogout: () => Promise<void>;
   /**
-   * Phantom/Solflare. Sets the Privy flag now and returns logout for after
-   * the new wallet has connected. Null keeps the session (no logout).
+   * Phantom/Solflare. Clears the Privy re-entry flag now and returns one
+   * logout for success, rejection, timeout, or cancel.
    */
-  prepareSwitch: (name: string) => (() => Promise<void>) | null;
+  armExternalLogout: () => OnceTask;
 };
 
 function PrivyConnect() {
@@ -376,30 +425,19 @@ function PrivyConnect() {
     return "login";
   }, [authenticated, job, login, ready, t, user]);
 
-  const prepareSwitch = useCallback(
-    (nextName: string): (() => Promise<void>) | null => {
-      if (
-        !shouldEndPrivySession({
-          nextName,
-          activeName: job.wallet?.adapter.name,
-          privyAuthenticated: authenticated,
-          privyName: PRIVY_WALLET_NAME,
-        })
-      ) {
-        return null;
-      }
-      // Before connect, so a mount-time onComplete cannot select Privy again.
-      wantPrivy.current = false;
-      return async () => {
+  const armExternalLogout = useCallback((): OnceTask => {
+    // Before connect, so a mount-time onComplete cannot select Privy again.
+    wantPrivy.current = false;
+    return createOnceTask(() =>
+      raceLogout(async () => {
         try {
           await logout();
         } catch {
           /* session may already be gone */
         }
-      };
-    },
-    [authenticated, job.wallet?.adapter.name, logout],
-  );
+      }),
+    );
+  }, [logout]);
 
   const onLogout = useCallback(async () => {
     const endPrivy = shouldEndPrivySession({
@@ -408,12 +446,17 @@ function PrivyConnect() {
       privyAuthenticated: authenticated,
       privyName: PRIVY_WALLET_NAME,
     });
-    if (endPrivy) wantPrivy.current = false;
+    const pendingSwitch = job.takeArmedLogout();
+    if (endPrivy || pendingSwitch) wantPrivy.current = false;
     job.cancel();
     try {
       await job.disconnect();
     } catch {
       /* adapter may already be disconnected */
+    }
+    if (pendingSwitch) {
+      await pendingSwitch;
+      return;
     }
     if (!endPrivy) return;
     try {
@@ -426,7 +469,7 @@ function PrivyConnect() {
   return (
     <ConnectUi
       job={job}
-      privy={{ ready, onPick, onLogout, prepareSwitch }}
+      privy={{ ready, onPick, onLogout, armExternalLogout }}
     />
   );
 }
@@ -476,10 +519,11 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   }, [job.error]);
 
   useEffect(() => {
-    if (!job.busy && job.connected && !job.dropped && !job.error) {
-      setPickerOpen(false);
-    }
-  }, [job.busy, job.connected, job.dropped, job.error]);
+    const settled =
+      !job.dropped &&
+      ((job.connected && Boolean(job.publicKey)) || Boolean(job.pinnedAddress));
+    if (!job.busy && settled && !job.error) setPickerOpen(false);
+  }, [job.busy, job.connected, job.publicKey, job.pinnedAddress, job.dropped, job.error]);
 
   useEffect(() => {
     if (!pickerOpen && !menuOpen) return;
@@ -487,19 +531,38 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
       if (event.key !== "Escape") return;
       setPickerOpen(false);
       setMenuOpen(false);
-      if (!job.connecting) job.cancel();
+      dismissPicker();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pickerOpen, menuOpen, job]);
 
   const address = job.publicKey ? shortPk(job.publicKey) : "";
-  const shownConnected = job.connected && !job.dropped;
-  const label = job.busy
-    ? t("connect.busy")
-    : shownConnected && address
-      ? address
-      : t("nav.selectWallet");
+  const shownConnected =
+    !job.dropped &&
+    ((job.connected && Boolean(address)) || Boolean(job.pinnedAddress));
+  const label = walletButtonLabel({
+    dropped: job.dropped,
+    busy: job.busy,
+    connected: job.connected && !job.dropped,
+    address,
+    pinnedAddress: job.dropped ? null : job.pinnedAddress,
+    connectingLabel: t("connect.busy"),
+    selectLabel: t("nav.selectWallet"),
+  });
+
+  function attemptSettled() {
+    return shownConnected;
+  }
+
+  function dismissPicker() {
+    setPickerOpen(false);
+    setMenuOpen(false);
+    // Closing the list is not a logout. Cancelling an in-flight
+    // Phantom/Solflare attempt is, and it logs out once.
+    if (job.connecting || attemptSettled()) return;
+    job.cancel(true);
+  }
 
   function openPrimary() {
     job.clearError();
@@ -515,13 +578,11 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   function choose(name: string) {
     setMenuOpen(false);
     setPickerOpen(true);
-    const logoutAfter = privy?.prepareSwitch(name) ?? null;
-    if (!logoutAfter) {
+    if (!privy || !externalWalletChoiceEndsPrivy(name)) {
       job.requestConnect(name);
       return;
     }
-    // Connect settles inside the job. Logout runs after that, still in the loop.
-    job.requestConnect(name, () => raceLogout(logoutAfter));
+    job.requestConnect(name, privy.armExternalLogout());
   }
 
   const phantom = job.wallets.find((item) => item.adapter.name === PHANTOM);
@@ -581,8 +642,7 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                 placeItems: "safe center",
               }}
               onClick={() => {
-                setPickerOpen(false);
-                if (!job.connecting) job.cancel();
+                dismissPicker();
               }}
             >
               {/*
@@ -617,8 +677,7 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                     data-testid="connect-close"
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-lg leading-none text-[#8b95a8] hover:bg-[#1a2330] hover:text-[#e8eef5]"
                     onClick={() => {
-                      setPickerOpen(false);
-                      if (!job.connecting) job.cancel();
+                      dismissPicker();
                     }}
                   >
                     ×
