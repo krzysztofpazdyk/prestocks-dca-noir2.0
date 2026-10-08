@@ -24,6 +24,12 @@
 
 /** Cap a post-connect Privy logout so a hung session cannot hold "Łączenie…". */
 export const CONNECT_LOGOUT_RACE_MS = 3_000;
+/**
+ * How long a new connect waits for the previous adapter `disconnect()`.
+ * Phantom emits `disconnect` only after that promise, which can wipe the
+ * wallet selected in between.
+ */
+export const CONNECT_DISCONNECT_WAIT_MS = 2_000;
 export type ConnectPhase = "disconnect" | "select" | "connect";
 export type ConnectStep = "wait" | "clear" | "select" | "connect" | "done";
 
@@ -110,14 +116,21 @@ export function externalWalletChoiceEndsPrivy(name: string | null): boolean {
   return name === "Phantom" || name === "Solflare";
 }
 
-/** Logout only when this click is external and a Privy session may exist. */
+/**
+ * Logout only when this click is external and a Privy session may exist.
+ * `privyReady === false` still arms Phantom/Solflare: the session is unknown,
+ * so the next Privy login must be a fresh OTP. Omit it to keep the session check.
+ * Picking Privy never arms.
+ */
 export function armPrivyLogoutForChoice(input: {
   nextName: string | null;
   activeName: string | undefined;
   privyAuthenticated: boolean;
   privyName?: string;
+  privyReady?: boolean;
 }): boolean {
   if (!externalWalletChoiceEndsPrivy(input.nextName)) return false;
+  if (input.privyReady === false) return true;
   return shouldEndPrivySession({
     nextName: input.nextName,
     activeName: input.activeName,
@@ -138,9 +151,13 @@ export function decidePrivyPick(input: {
   authenticated: boolean;
   hasEmbeddedWallet: boolean;
   externalSwitch: boolean;
+  /** Rozłącz already called `logout()` and it has not finished. */
+  logoutInFlight?: boolean;
 }): PrivyPickAction {
   if (!input.ready) return "not-ready";
-  if (input.externalSwitch || !input.authenticated) return "otp";
+  if (input.externalSwitch || input.logoutInFlight || !input.authenticated) {
+    return "otp";
+  }
   if (input.hasEmbeddedWallet) return "connect";
   return "create";
 }
@@ -156,10 +173,34 @@ export function nextPinnedAddress(input: {
   adapterLive: boolean;
   liveAddress: string | null;
   currentPin: string | null;
+  /**
+   * Header pin exists only while this attempt ends a Privy session.
+   * `false` keeps the pin null for the whole job. Omit to keep the old pin.
+   */
+  switchWithLogout?: boolean;
 }): string | null {
+  if (input.switchWithLogout === false) return null;
   if (input.dropped || !input.jobActive || !input.adapterLive) return null;
   if (input.liveAddress) return input.liveAddress;
   return input.currentPin;
+}
+
+/**
+ * An error replaces the header only when the target adapter is not actually
+ * up. A connected target with a key keeps the address.
+ */
+export function failShowsError(input: {
+  target: string | null;
+  selectedName: string | null;
+  adapterConnected: boolean;
+  adapterHasKey: boolean;
+}): boolean {
+  return !(
+    input.target != null &&
+    input.selectedName === input.target &&
+    input.adapterConnected &&
+    input.adapterHasKey
+  );
 }
 
 /**
@@ -252,6 +293,110 @@ export function createOnceTask(run: () => Promise<void> | void): OnceTask {
   };
 }
 
+/**
+ * In-flight `disconnect()`. `bump()` (a new connect) stale-marks the
+ * post-await continuation without dropping the promise the next job waits on.
+ */
+export type DisconnectTracker = {
+  begin: (promise: Promise<void>) => number;
+  pending: () => Promise<void> | null;
+  isCurrent: (gen: number) => boolean;
+  bump: () => void;
+};
+
+export function createDisconnectTracker(): DisconnectTracker {
+  let gen = 0;
+  let current: Promise<void> | null = null;
+  return {
+    begin(promise) {
+      gen += 1;
+      const tracked = promise.then(
+        () => undefined,
+        () => undefined,
+      );
+      current = tracked;
+      void tracked.finally(() => {
+        if (current === tracked) current = null;
+      });
+      return gen;
+    },
+    pending: () => current,
+    isCurrent: (generation) => generation === gen,
+    bump() {
+      gen += 1;
+    },
+  };
+}
+
+/**
+ * Effects after `await disconnect()`. A newer `requestConnect` has bumped
+ * the generation, so this must not set `dropped`, call `select(null)`, or
+ * touch the pin.
+ */
+export function applyDisconnectContinuation(
+  tracker: DisconnectTracker,
+  generation: number,
+  effects: {
+    selectNull: () => void;
+    setDropped: () => void;
+    touchPin: () => void;
+  },
+): boolean {
+  if (!tracker.isCurrent(generation)) return false;
+  effects.setDropped();
+  effects.selectNull();
+  effects.touchPin();
+  return true;
+}
+
+export type CapTimers = {
+  setTimer: (fn: () => void, ms: number) => unknown;
+  clearTimer: (handle: unknown) => void;
+};
+
+/** Resolve when `p` settles or after `ms`, whichever is first. A throw is swallowed. */
+export function capPromise(
+  p: Promise<unknown>,
+  ms: number,
+  timers: CapTimers,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      timers.clearTimer(handle);
+      resolve();
+    };
+    const handle = timers.setTimer(finish, ms);
+    void p.then(finish, finish);
+  });
+}
+
+/**
+ * Wait out a Privy logout (armed switch or Rozłącz), at most `capMs`,
+ * then open login exactly once.
+ */
+export async function privyOtpAfterLogout(input: {
+  pending: Promise<void> | null;
+  authenticated: boolean;
+  logout: () => Promise<void>;
+  login: () => void;
+  capMs: number;
+  timers: CapTimers;
+}): Promise<void> {
+  const wait = input.pending
+    ? input.pending
+    : input.authenticated
+      ? Promise.resolve().then(() => input.logout()).then(
+          () => undefined,
+          () => undefined,
+        )
+      : Promise.resolve();
+  await capPromise(wait, input.capMs, input.timers);
+  input.login();
+}
+
 /** Privy's standard `connect()` only returns accounts it already has. */
 export function adapterHasAccount(adapter: unknown): boolean {
   if (!adapter || typeof adapter !== "object" || !("wallet" in adapter)) {
@@ -302,6 +447,31 @@ export type ConnectRuntime = {
    * out on those paths with the same {@link OnceTask}.
    */
   afterConnected?: () => Promise<void>;
+  /**
+   * Previous `disconnect()` is still in flight. Called once before select/connect.
+   * Callers cap it (see {@link CONNECT_DISCONNECT_WAIT_MS}).
+   */
+  waitForPendingDisconnect?: () => Promise<void>;
+  /** Once, on the first settled connect, before `afterConnected`. */
+  onTargetConnected?: () => void;
+};
+
+export type SwitchResult = "connected" | "failed" | "cancelled" | "timeout";
+
+export type SwitchAttemptOptions = {
+  /** One logout for this external click. Absent when no Privy session. */
+  logout?: OnceTask;
+  capMs?: number;
+  timers?: CapTimers;
+  /** Fires once when the target is connected, before logout resolves. */
+  onTargetConnected?: () => void;
+  /** Original rejection or {@link ConnectTimeoutError}. */
+  onError?: (error: unknown) => void;
+  /**
+   * Default true. The hook passes false: user cancel and effect cleanup
+   * must not start a second logout (cancel already did, cleanup must not).
+   */
+  logoutOnCancel?: boolean;
 };
 
 /**
@@ -311,6 +481,10 @@ export type ConnectRuntime = {
  * A `connect()` promise that never settles is the caller's watchdog problem.
  */
 export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
+  if (rt.waitForPendingDisconnect) {
+    await rt.waitForPendingDisconnect();
+    if (rt.isCancelled()) return;
+  }
   const started = rt.now();
   let phase: ConnectPhase = "disconnect";
   let promptedAt: number | null = null;
@@ -347,15 +521,19 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
       forceFresh: awaitDrop,
     });
     if (step === "done") {
-      if (!ranAfterConnected && rt.afterConnected) {
+      if (!ranAfterConnected) {
         ranAfterConnected = true;
-        try {
-          await rt.afterConnected();
-        } catch {
-          // The new wallet is already connected. Logout must not fail the switch.
+        rt.onTargetConnected?.();
+        if (rt.afterConnected) {
+          try {
+            await rt.afterConnected();
+          } catch {
+            // The new wallet is already connected. Logout must not fail the switch.
+          }
+          if (rt.isCancelled()) return;
         }
-        if (rt.isCancelled()) return;
-        // A disconnect event can land just after logout resolves.
+        // Phantom emits disconnect after its own disconnect() resolves.
+        // A plain job used to return here and lose the new session.
         await rt.sleep(200);
         continue;
       }
@@ -411,4 +589,52 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
     if (rt.isCancelled()) return;
     await rt.sleep(200);
   }
+}
+
+/**
+ * One Phantom/Solflare attempt: connect job, then a single logout.
+ * Failure and timeout always start `logout`. Cancel starts it unless
+ * `logoutOnCancel` is false. The connected callback runs before logout resolves.
+ */
+export async function runSwitchAttempt(
+  rt: ConnectRuntime,
+  options: SwitchAttemptOptions = {},
+): Promise<SwitchResult> {
+  const capMs = options.capMs ?? CONNECT_LOGOUT_RACE_MS;
+  const wrapped: ConnectRuntime = {
+    ...rt,
+    onTargetConnected: () => {
+      options.onTargetConnected?.();
+      rt.onTargetConnected?.();
+    },
+    afterConnected: async () => {
+      if (options.logout) {
+        const run = options.logout.start();
+        if (options.timers) await capPromise(run, capMs, options.timers);
+        else await run;
+      }
+      if (rt.afterConnected) {
+        try {
+          await rt.afterConnected();
+        } catch {
+          // Logout already settled or was swallowed. Do not fail the switch.
+        }
+      }
+    },
+  };
+  try {
+    await runConnectJob(wrapped);
+  } catch (error) {
+    if (options.logout) await options.logout.start();
+    options.onError?.(error);
+    if (error instanceof ConnectTimeoutError) return "timeout";
+    return "failed";
+  }
+  if (rt.isCancelled()) {
+    if (options.logout && options.logoutOnCancel !== false) {
+      await options.logout.start();
+    }
+    return "cancelled";
+  }
+  return "connected";
 }
