@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   adapterHasAccount,
+  armPrivyLogoutForChoice,
   CONNECT_STALL_MS,
   ConnectTimeoutError,
   createOnceTask,
+  decidePrivyPick,
   externalWalletChoiceEndsPrivy,
   nextConnectStep,
+  nextPinnedAddress,
+  replayLiveConnect,
   runConnectJob,
   shouldEndPrivySession,
+  shouldRestoreExternalWallet,
   walletButtonLabel,
   type ConnectRuntime,
 } from "../lib/connect-wallet";
@@ -533,4 +538,250 @@ test("wallet rejection surfaces instead of a timeout", async () => {
     assert.equal(error.name, "WalletNotReadyError");
     return true;
   });
+});
+
+test("same wallet after Rozłącz is not already done", () => {
+  const base = {
+    phase: "connect" as const,
+    target: "Phantom",
+    selectedName: "Phantom",
+    connected: true,
+    connecting: false,
+    disconnecting: true,
+    targetReady: true,
+  };
+  assert.equal(nextConnectStep(base), "done");
+  assert.equal(nextConnectStep({ ...base, forceFresh: true }), "wait");
+  assert.equal(
+    nextConnectStep({
+      ...base,
+      forceFresh: true,
+      connected: false,
+      selectedName: "Phantom",
+    }),
+    "clear",
+  );
+  assert.equal(
+    nextConnectStep({
+      ...base,
+      forceFresh: true,
+      connected: false,
+      selectedName: null,
+    }),
+    "select",
+  );
+});
+
+test("forceFresh reconnects a wallet that still looks connected", async () => {
+  const state: Sim = {
+    selectedName: "Phantom",
+    connected: true,
+    connecting: false,
+    disconnecting: true,
+    targetReady: true,
+  };
+  let disconnects = 0;
+  const sim = virtualRuntime(state, {
+    onDisconnect: () => {
+      disconnects += 1;
+      state.connected = false;
+      state.selectedName = null;
+      state.disconnecting = false;
+    },
+    onSelect: (name) => {
+      state.selectedName = name;
+    },
+    onConnect: () => {
+      if (state.selectedName === "Phantom") state.connected = true;
+    },
+  });
+  sim.rt.target = "Phantom";
+  sim.rt.forceFresh = true;
+  await runConnectJob(sim.rt);
+  assert.equal(disconnects, 1);
+  assert.equal(sim.connects, 1);
+  assert.equal(state.connected, true);
+  assert.equal(state.selectedName, "Phantom");
+});
+
+test("extension lock after settle does not prompt the wallet again", async () => {
+  const state: Sim = {
+    selectedName: "Phantom",
+    connected: true,
+    connecting: false,
+    disconnecting: false,
+    targetReady: true,
+  };
+  const sim = virtualRuntime(state, {
+    onSelect: (name) => {
+      state.selectedName = name;
+    },
+    onConnect: () => {
+      state.connected = true;
+    },
+  });
+  sim.rt.target = "Phantom";
+  sim.rt.adapterStillLive = () => false;
+  sim.rt.afterConnected = async () => {
+    state.connected = false;
+    state.selectedName = null;
+  };
+  await runConnectJob(sim.rt);
+  assert.equal(sim.connects, 0);
+  assert.equal(state.connected, false);
+  assert.equal(state.selectedName, null);
+});
+
+test("logout is armed only when a Privy session may exist", () => {
+  assert.equal(
+    armPrivyLogoutForChoice({
+      nextName: "Phantom",
+      activeName: "Privy",
+      privyAuthenticated: true,
+    }),
+    true,
+  );
+  assert.equal(
+    armPrivyLogoutForChoice({
+      nextName: "Solflare",
+      activeName: "Phantom",
+      privyAuthenticated: false,
+    }),
+    false,
+  );
+  assert.equal(
+    armPrivyLogoutForChoice({
+      nextName: "Phantom",
+      activeName: "Privy",
+      privyAuthenticated: false,
+    }),
+    true,
+  );
+  assert.equal(
+    armPrivyLogoutForChoice({
+      nextName: "Privy",
+      activeName: "Privy",
+      privyAuthenticated: true,
+    }),
+    false,
+  );
+  assert.equal(
+    armPrivyLogoutForChoice({
+      nextName: null,
+      activeName: "Privy",
+      privyAuthenticated: true,
+    }),
+    false,
+  );
+});
+
+test("returning to Privy during an external switch asks for OTP", () => {
+  assert.equal(
+    decidePrivyPick({
+      ready: true,
+      authenticated: true,
+      hasEmbeddedWallet: true,
+      externalSwitch: true,
+    }),
+    "otp",
+  );
+  assert.equal(
+    decidePrivyPick({
+      ready: true,
+      authenticated: true,
+      hasEmbeddedWallet: true,
+      externalSwitch: false,
+    }),
+    "connect",
+  );
+  assert.equal(
+    decidePrivyPick({
+      ready: true,
+      authenticated: false,
+      hasEmbeddedWallet: false,
+      externalSwitch: false,
+    }),
+    "otp",
+  );
+  assert.equal(
+    decidePrivyPick({
+      ready: false,
+      authenticated: true,
+      hasEmbeddedWallet: true,
+      externalSwitch: true,
+    }),
+    "not-ready",
+  );
+  assert.equal(
+    decidePrivyPick({
+      ready: true,
+      authenticated: true,
+      hasEmbeddedWallet: false,
+      externalSwitch: false,
+    }),
+    "create",
+  );
+});
+
+test("pinned address lasts only for the switch and dies with the adapter", () => {
+  const pin = (
+    over: Partial<Parameters<typeof nextPinnedAddress>[0]> = {},
+  ) =>
+    nextPinnedAddress({
+      dropped: false,
+      jobActive: true,
+      adapterLive: true,
+      liveAddress: "US51…ELFx",
+      currentPin: null,
+      ...over,
+    });
+  assert.equal(pin(), "US51…ELFx");
+  assert.equal(pin({ liveAddress: null, currentPin: "US51…ELFx" }), "US51…ELFx");
+  assert.equal(pin({ jobActive: false }), null);
+  assert.equal(pin({ dropped: true }), null);
+  assert.equal(pin({ adapterLive: false, currentPin: "US51…ELFx" }), null);
+});
+
+test("late logout restores a live Phantom and ignores a lock or Rozłącz", () => {
+  const restore = (
+    over: Partial<Parameters<typeof shouldRestoreExternalWallet>[0]> = {},
+  ) =>
+    shouldRestoreExternalWallet({
+      target: "Phantom",
+      dropped: false,
+      guarding: true,
+      superseded: false,
+      selectedName: null,
+      hookConnected: false,
+      adapterConnected: true,
+      adapterHasKey: true,
+      ...over,
+    });
+  assert.equal(restore(), true);
+  assert.equal(restore({ selectedName: "Phantom", hookConnected: false }), true);
+  assert.equal(restore({ selectedName: "Phantom", hookConnected: true }), false);
+  assert.equal(restore({ adapterConnected: false }), false);
+  assert.equal(restore({ adapterHasKey: false }), false);
+  assert.equal(restore({ dropped: true }), false);
+  assert.equal(restore({ guarding: false }), false);
+  assert.equal(restore({ superseded: true }), false);
+  assert.equal(restore({ target: null }), false);
+});
+
+test("replay emits connect when the adapter is already live", () => {
+  let emitted: unknown = null;
+  const adapter = {
+    name: "Phantom",
+    connected: true,
+    publicKey: { toBase58: () => "key" },
+    emit: (_event: "connect", key: unknown) => {
+      emitted = key;
+    },
+  };
+  assert.equal(replayLiveConnect(adapter, "Phantom"), true);
+  assert.equal(emitted, adapter.publicKey);
+  adapter.connected = false;
+  assert.equal(replayLiveConnect(adapter, "Phantom"), false);
+  assert.equal(replayLiveConnect(adapter, "Solflare"), false);
+  assert.equal(replayLiveConnect(null, "Phantom"), false);
 });

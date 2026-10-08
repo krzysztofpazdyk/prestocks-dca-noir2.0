@@ -13,13 +13,17 @@ import { useI18n } from "@/lib/i18n";
 import { shortPk } from "@/lib/predca";
 import {
   adapterHasAccount,
+  armPrivyLogoutForChoice,
   CONNECT_LOGOUT_RACE_MS,
   CONNECT_PROMPT_MS,
   ConnectTimeoutError,
   createOnceTask,
-  externalWalletChoiceEndsPrivy,
+  decidePrivyPick,
+  nextPinnedAddress,
+  replayLiveConnect,
   runConnectJob,
   shouldEndPrivySession,
+  shouldRestoreExternalWallet,
   walletButtonLabel,
   type OnceTask,
 } from "@/lib/connect-wallet";
@@ -37,8 +41,10 @@ const SOLFLARE = "Solflare";
 type Job = {
   id: number;
   target: string;
-  /** One logout for this Phantom/Solflare click. Absent for Privy. */
+  /** One logout for this Phantom/Solflare click. Absent when no Privy session. */
   endPrivy?: OnceTask;
+  /** Rozłącz already ran; the same wallet may still look connected. */
+  forceFresh?: boolean;
 };
 
 function raceLogout(run: () => Promise<void>): Promise<void> {
@@ -83,11 +89,16 @@ function useConnectJob() {
   // Header treats this as logged out before `useWallet().connected` flips.
   // Do not clear it when `connected` is still true — that undoes Rozłącz.
   const [dropped, setDropped] = useState(false);
-  // Address kept while a background Privy logout briefly clears `connected`.
+  // Hides the address that Rozłącz has not finished dropping yet.
+  const [staleHold, setStaleHold] = useState(false);
+  // Address kept only while a switch job is repairing a logout flicker.
   const [pinnedAddress, setPinnedAddress] = useState<string | null>(null);
   const pinnedRef = useRef<string | null>(null);
   const pinTargetRef = useRef<string | null>(null);
   const endPrivyRef = useRef<OnceTask | null>(null);
+  // External wallet we must put back if Privy logout clears the selected name.
+  const [logoutGuard, setLogoutGuard] = useState<string | null>(null);
+  const guardGen = useRef(0);
   const walletRef = useRef(wallet);
   const walletsRef = useRef(wallets);
   const connectedRef = useRef(connected);
@@ -96,6 +107,9 @@ function useConnectJob() {
   const jobRef = useRef(job);
   const selectRef = useRef(select);
   const connectRef = useRef(connect);
+  const droppedRef = useRef(dropped);
+  const logoutPendingRef = useRef(false);
+  const logoutPromiseRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     tRef.current = t;
@@ -107,7 +121,14 @@ function useConnectJob() {
     jobRef.current = job;
     selectRef.current = select;
     connectRef.current = connect;
+    droppedRef.current = dropped;
   });
+
+  const releasePin = useCallback(() => {
+    pinnedRef.current = null;
+    pinTargetRef.current = null;
+    setPinnedAddress(null);
+  }, []);
 
   const fail = useCallback((message: string) => {
     setJob(null);
@@ -116,9 +137,8 @@ function useConnectJob() {
     // replace it with "Łączenie…" or an error dialog.
     if (pinnedRef.current) return;
     setError(message);
-    pinTargetRef.current = null;
-    setPinnedAddress(null);
-  }, []);
+    releasePin();
+  }, [releasePin]);
 
   const requestConnect = useCallback((target: string, endPrivy?: OnceTask) => {
     const previous = endPrivyRef.current;
@@ -126,16 +146,13 @@ function useConnectJob() {
       void previous.start();
     }
     endPrivyRef.current = endPrivy ?? null;
-    setDropped(false);
-    setError(null);
-    pinnedRef.current = null;
-    setPinnedAddress(null);
-    pinTargetRef.current = target;
+    const forceFresh = droppedRef.current || disconnectingRef.current;
     // Same adapter and nothing to finish afterward: already settled.
-    // A Phantom/Solflare logout still goes through the job so a wipe
-    // can be repaired after the address is on screen.
+    // A session that still has to log out goes through the job. A wallet
+    // Rozłącz just dropped is not settled, even if `connected` is still true.
     if (
       !endPrivy &&
+      !forceFresh &&
       connectedRef.current &&
       walletRef.current?.adapter.name === target
     ) {
@@ -143,28 +160,34 @@ function useConnectJob() {
       setJob(null);
       return;
     }
+    guardGen.current += 1;
+    setLogoutGuard(null);
+    setDropped(false);
+    setStaleHold(forceFresh && connectedRef.current);
+    setError(null);
+    pinnedRef.current = null;
+    setPinnedAddress(null);
+    pinTargetRef.current = target;
     const id = Date.now() + Math.floor(Math.random() * 1000);
     setBusy(true);
-    setJob({ id, target, endPrivy });
+    setJob({ id, target, endPrivy, forceFresh });
   }, []);
 
   const cancel = useCallback((endPrivy?: boolean) => {
     if (endPrivy) void endPrivyRef.current?.start();
-    if (!pinnedRef.current) {
-      pinTargetRef.current = null;
-      setPinnedAddress(null);
-    }
+    releasePin();
     setJob(null);
     setBusy(false);
     setError(null);
-  }, []);
+  }, [releasePin]);
 
   const clearError = useCallback(() => setError(null), []);
 
   const disconnect = useCallback(async () => {
-    pinnedRef.current = null;
-    pinTargetRef.current = null;
-    setPinnedAddress(null);
+    guardGen.current += 1;
+    setLogoutGuard(null);
+    setStaleHold(false);
+    releasePin();
     setDropped(true);
     selectRef.current(null);
     clearStatusAuthCache();
@@ -173,18 +196,74 @@ function useConnectJob() {
     } catch {
       // select(null) already started disconnect. The header does not wait.
     }
-  }, [walletDisconnect]);
+  }, [releasePin, walletDisconnect]);
 
-  // As soon as the chosen wallet is connected, drop "Łączenie…" and remember
-  // the address. A later Privy logout must not put the connecting label back.
+  // The remembered address covers only the switch. After the job, the live
+  // key is the header. An extension lock clears the adapter, so the pin goes
+  // and the label falls through to „Zaloguj”.
   useEffect(() => {
-    if (dropped || !connected || !publicKey) return;
-    if ((wallet?.adapter.name ?? null) !== pinTargetRef.current) return;
-    const next = shortPk(publicKey);
-    pinnedRef.current = next;
-    setPinnedAddress(next);
-    setBusy(false);
-  }, [connected, publicKey, wallet, dropped]);
+    if (staleHold && !connected) setStaleHold(false);
+    const target = pinTargetRef.current;
+    const listed = target
+      ? wallets.find((item) => item.adapter.name === target)
+      : undefined;
+    const adapterLive = Boolean(
+      listed?.adapter.connected && listed.adapter.publicKey,
+    );
+    const onTarget =
+      Boolean(connected && publicKey) &&
+      (wallet?.adapter.name ?? null) === target;
+    // After the job returns, keep the pin while logout may still clear the
+    // hook. The guard, not the pin, ends when that logout settles.
+    const guarded =
+      logoutGuard != null && logoutGuard === target && adapterLive;
+    const next = nextPinnedAddress({
+      dropped: dropped || staleHold,
+      jobActive: job != null || guarded,
+      adapterLive: adapterLive || guarded,
+      liveAddress: onTarget && publicKey ? shortPk(publicKey) : null,
+      currentPin: pinnedRef.current,
+    });
+    if (next !== pinnedRef.current) {
+      pinnedRef.current = next;
+      setPinnedAddress(next);
+    }
+    if (job != null && next) setBusy(false);
+  }, [connected, publicKey, wallet, wallets, dropped, staleHold, job, logoutGuard]);
+
+  // A Privy logout that lands after the switch must not clear Phantom.
+  const restores = useRef(0);
+  useEffect(() => {
+    if (!logoutGuard) {
+      restores.current = 0;
+      return;
+    }
+    const listed = wallets.find((item) => item.adapter.name === logoutGuard);
+    const adapter = listed?.adapter;
+    const superseded = job != null && job.target !== logoutGuard;
+    if (
+      !shouldRestoreExternalWallet({
+        target: logoutGuard,
+        dropped: dropped || staleHold,
+        guarding: true,
+        superseded,
+        selectedName: wallet?.adapter.name ?? null,
+        hookConnected: connected,
+        adapterConnected: Boolean(adapter?.connected),
+        adapterHasKey: Boolean(adapter?.publicKey),
+      }) ||
+      !adapter
+    ) {
+      return;
+    }
+    if ((wallet?.adapter.name ?? null) !== logoutGuard) {
+      if (restores.current >= 4) return;
+      restores.current += 1;
+      select(logoutGuard as WalletName);
+      return;
+    }
+    if (!connected) replayLiveConnect(adapter, logoutGuard);
+  }, [logoutGuard, dropped, staleHold, job, wallets, wallet, connected, select]);
 
   useEffect(() => {
     if (!job) return;
@@ -213,6 +292,13 @@ function useConnectJob() {
       now: () => Date.now(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       isCancelled: () => cancelled || jobRef.current?.id !== jobId,
+      forceFresh: job.forceFresh,
+      adapterStillLive: () => {
+        const listed = walletsRef.current.find(
+          (item) => item.adapter.name === target,
+        );
+        return Boolean(listed?.adapter.connected && listed.adapter.publicKey);
+      },
       getState: () => {
         const selectedName = walletRef.current?.adapter.name ?? null;
         const listed = walletsRef.current.find(
@@ -230,9 +316,10 @@ function useConnectJob() {
           targetReady,
         };
       },
-      disconnectAdapter: async () => {
+      disconnectAdapter: async (force) => {
         const adapter = walletRef.current?.adapter;
-        if (!adapter || adapter.name === target) return;
+        if (!adapter) return;
+        if (!force && adapter.name === target) return;
         await Promise.race([
           adapter.disconnect().catch(() => undefined),
           new Promise((resolve) => setTimeout(resolve, 2000)),
@@ -241,7 +328,11 @@ function useConnectJob() {
       select: (name) => {
         selectRef.current(name == null ? null : (name as WalletName));
       },
-      connect: () => connectRef.current(),
+      connect: async () => {
+        const adapter = walletRef.current?.adapter;
+        if (adapter && replayLiveConnect(adapter, target)) return;
+        await connectRef.current();
+      },
       afterConnected: endPrivy ? () => endPrivy.start() : undefined,
     })
       .then(() => {
@@ -269,18 +360,48 @@ function useConnectJob() {
     publicKey,
     busy,
     dropped,
+    staleHold,
     pinnedAddress,
     error,
+    target: job?.target ?? null,
+    externalSwitch:
+      logoutGuard != null ||
+      (job != null && (job.target === PHANTOM || job.target === SOLFLARE)),
     requestConnect,
     cancel,
     disconnect,
     clearError,
     fail,
-    /** Starts the Phantom/Solflare logout if this click has not logged out yet. */
+    /**
+     * The one logout for this Phantom/Solflare click.
+     * A second call awaits the same promise instead of logging out again.
+     */
     takeArmedLogout: () => {
       const armed = endPrivyRef.current;
-      if (!armed || armed.hasStarted()) return null;
-      return armed.start();
+      if (armed && !armed.hasStarted()) return armed.start();
+      // A logout that already finished must not swallow a later Rozłącz.
+      if (logoutPendingRef.current) return logoutPromiseRef.current;
+      return null;
+    },
+    noteLogout: (run: Promise<void>) => {
+      logoutPendingRef.current = true;
+      logoutPromiseRef.current = run;
+      void run.finally(() => {
+        if (logoutPromiseRef.current === run) logoutPendingRef.current = false;
+      });
+    },
+    /** Keep this external wallet across a Privy logout that finishes late. */
+    holdThroughLogout: (run: Promise<void>) => {
+      const target = pinTargetRef.current;
+      if (target !== PHANTOM && target !== SOLFLARE) return;
+      const gen = ++guardGen.current;
+      setLogoutGuard(target);
+      void run.finally(() => {
+        window.setTimeout(() => {
+          if (guardGen.current !== gen) return;
+          setLogoutGuard((current) => (current === target ? null : current));
+        }, 800);
+      });
     },
   };
 }
@@ -324,9 +445,11 @@ type PrivyUi = {
   /** "login" closes our list so the Privy modal is the only dialog. */
   onPick: () => "login" | "connect";
   onLogout: () => Promise<void>;
+  /** True when a Privy session may still be open. */
+  authenticated: boolean;
   /**
-   * Phantom/Solflare. Clears the Privy re-entry flag now and returns one
-   * logout for success, rejection, timeout, or cancel.
+   * Phantom/Solflare, and only when a session may exist. One logout for
+   * success, rejection, timeout, or cancel.
    */
   armExternalLogout: () => OnceTask;
 };
@@ -401,43 +524,65 @@ function PrivyConnect() {
   const { login } = useLogin(loginCallbacks);
 
   const onPick = useCallback((): "login" | "connect" => {
-    if (!ready) {
+    const action = decidePrivyPick({
+      ready,
+      authenticated,
+      hasEmbeddedWallet: hasSolanaEmbeddedWallet(user),
+      externalSwitch: job.externalSwitch,
+    });
+    if (action === "not-ready") {
       job.fail(t("connect.notReady"));
       return "connect";
     }
     job.clearError();
-    if (authenticated) {
+    if (action === "otp") {
+      // End the external attempt first. Connecting Privy here waits until
+      // the embedded account is gone and then times out.
+      const pending = job.externalSwitch ? job.takeArmedLogout() : null;
       wantPrivy.current = false;
-      if (hasSolanaEmbeddedWallet(user)) {
-        job.requestConnect(PRIVY_WALLET_NAME);
-        return "connect";
+      if (job.externalSwitch) {
+        job.cancel();
+        void job.disconnect();
       }
-      // Authenticated, but the first create crashed or was skipped.
-      // Close our list so Privy's create screen is the only dialog.
       void (async () => {
-        const ok = await ensureRef.current(user);
-        if (ok) requestRef.current(PRIVY_WALLET_NAME);
+        if (pending) await pending;
+        else if (authenticated) {
+          try {
+            await logout();
+          } catch {
+            /* session may already be gone */
+          }
+        }
+        wantPrivy.current = true;
+        login();
       })();
       return "login";
     }
-    wantPrivy.current = true;
-    login();
+    if (action === "connect") {
+      wantPrivy.current = false;
+      job.requestConnect(PRIVY_WALLET_NAME);
+      return "connect";
+    }
+    wantPrivy.current = false;
+    // Authenticated, but the first create crashed or was skipped.
+    // Close our list so Privy's create screen is the only dialog.
+    void (async () => {
+      const ok = await ensureRef.current(user);
+      if (ok) requestRef.current(PRIVY_WALLET_NAME);
+    })();
     return "login";
   }, [authenticated, job, login, ready, t, user]);
 
   const armExternalLogout = useCallback((): OnceTask => {
     // Before connect, so a mount-time onComplete cannot select Privy again.
     wantPrivy.current = false;
-    return createOnceTask(() =>
-      raceLogout(async () => {
-        try {
-          await logout();
-        } catch {
-          /* session may already be gone */
-        }
-      }),
-    );
-  }, [logout]);
+    return createOnceTask(() => {
+      const run = logout().catch(() => undefined);
+      job.noteLogout(run);
+      job.holdThroughLogout(run);
+      return raceLogout(() => run);
+    });
+  }, [job, logout]);
 
   const onLogout = useCallback(async () => {
     const endPrivy = shouldEndPrivySession({
@@ -469,7 +614,13 @@ function PrivyConnect() {
   return (
     <ConnectUi
       job={job}
-      privy={{ ready, onPick, onLogout, armExternalLogout }}
+      privy={{
+        ready,
+        authenticated,
+        onPick,
+        onLogout,
+        armExternalLogout,
+      }}
     />
   );
 }
@@ -521,9 +672,18 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   useEffect(() => {
     const settled =
       !job.dropped &&
+      !job.staleHold &&
       ((job.connected && Boolean(job.publicKey)) || Boolean(job.pinnedAddress));
     if (!job.busy && settled && !job.error) setPickerOpen(false);
-  }, [job.busy, job.connected, job.publicKey, job.pinnedAddress, job.dropped, job.error]);
+  }, [
+    job.busy,
+    job.connected,
+    job.publicKey,
+    job.pinnedAddress,
+    job.dropped,
+    job.staleHold,
+    job.error,
+  ]);
 
   useEffect(() => {
     if (!pickerOpen && !menuOpen) return;
@@ -538,15 +698,16 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   }, [pickerOpen, menuOpen, job]);
 
   const address = job.publicKey ? shortPk(job.publicKey) : "";
+  const hiding = job.dropped || job.staleHold;
   const shownConnected =
-    !job.dropped &&
+    !hiding &&
     ((job.connected && Boolean(address)) || Boolean(job.pinnedAddress));
   const label = walletButtonLabel({
-    dropped: job.dropped,
+    dropped: hiding,
     busy: job.busy,
-    connected: job.connected && !job.dropped,
+    connected: job.connected && !hiding,
     address,
-    pinnedAddress: job.dropped ? null : job.pinnedAddress,
+    pinnedAddress: hiding ? null : job.pinnedAddress,
     connectingLabel: t("connect.busy"),
     selectLabel: t("nav.selectWallet"),
   });
@@ -578,11 +739,15 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
   function choose(name: string) {
     setMenuOpen(false);
     setPickerOpen(true);
-    if (!privy || !externalWalletChoiceEndsPrivy(name)) {
-      job.requestConnect(name);
-      return;
-    }
-    job.requestConnect(name, privy.armExternalLogout());
+    const endSession =
+      privy != null &&
+      armPrivyLogoutForChoice({
+        nextName: name,
+        activeName: job.wallet?.adapter.name,
+        privyAuthenticated: privy.authenticated,
+        privyName: PRIVY_WALLET_NAME,
+      });
+    job.requestConnect(name, endSession ? privy.armExternalLogout() : undefined);
   }
 
   const phantom = job.wallets.find((item) => item.adapter.name === PHANTOM);
@@ -713,7 +878,12 @@ function ConnectUi({ job, privy }: { job: ConnectJob; privy: PrivyUi | null }) {
                         hint={
                           privy.ready ? t("connect.privyHint") : t("privy.busy")
                         }
-                        disabled={!privy.ready || job.connecting}
+                        disabled={
+                          !privy.ready ||
+                          (job.connecting &&
+                            job.target !== PHANTOM &&
+                            job.target !== SOLFLARE)
+                        }
                         testId="connect-option-privy"
                         onClick={() => {
                           const mode = privy.onPick();

@@ -13,11 +13,13 @@
  * 1. disconnect the other adapter, then `select(null)` if its name remains,
  * 2. `select(target)` only once the previous name is gone and the target is ready,
  * 3. `connect()` only after the selected name matches the target.
- * If a late disconnect wipes the new name, select the target again.
- * Privy `logout()` runs only after that connect has settled (`afterConnected`),
- * and the loop stays up so a logout wipe is selected again. Logging out first
- * lets the old adapter clear the new name before this loop is watching.
- * `autoConnect` stays false — this helper never connects by itself.
+ * If a late disconnect wipes the new name while this loop is watching, select
+ * the target again. Privy `logout()` runs only after that connect has settled
+ * (`afterConnected`), and only when a Privy session may exist. A logout that
+ * finishes after the loop stops must not disconnect an external wallet that
+ * is still live — callers restore the name instead of treating it as Rozłącz.
+ * Once the target adapter itself drops (extension lock or disconnect), stop.
+ * Do not reconnect it. `autoConnect` stays false.
  */
 
 /** Cap a post-connect Privy logout so a hung session cannot hold "Łączenie…". */
@@ -50,7 +52,16 @@ export function nextConnectStep(input: {
   disconnecting: boolean;
   /** Target name is present and, for an embedded wallet, has an account. */
   targetReady: boolean;
+  /**
+   * Rozłącz, then the same wallet again, while the old session is still
+   * marked connected. Do not treat that as already done.
+   */
+  forceFresh?: boolean;
 }): ConnectStep {
+  if (input.forceFresh) {
+    if (input.connected) return "wait";
+    if (input.selectedName != null) return "clear";
+  }
   const selected = input.selectedName === input.target;
   if (selected && input.connected) return "done";
 
@@ -71,9 +82,9 @@ export function nextConnectStep(input: {
 
 /**
  * Disconnect (`nextName == null`) ends a Privy session that is still open.
- * Picking Privy does not. Phantom and Solflare return true when a session
- * exists; the click itself always logs out — see
- * {@link externalWalletChoiceEndsPrivy}. No second logout button.
+ * Picking Privy does not. Phantom and Solflare end it only when a session
+ * may exist (`authenticated` or the Privy adapter is active). No second
+ * logout button.
  */
 export function shouldEndPrivySession(input: {
   /** null = Disconnect. Otherwise the wallet the user just picked. */
@@ -91,12 +102,110 @@ export function shouldEndPrivySession(input: {
 }
 
 /**
- * A Phantom or Solflare click ends Privy even when no session was visible,
- * so the next Privy login always needs a new OTP.
+ * Phantom and Solflare are the clicks that can end Privy.
  * Picking Privy, or dismissing the picker (`null`), does not.
+ * A session must still exist — {@link armPrivyLogoutForChoice}.
  */
 export function externalWalletChoiceEndsPrivy(name: string | null): boolean {
   return name === "Phantom" || name === "Solflare";
+}
+
+/** Logout only when this click is external and a Privy session may exist. */
+export function armPrivyLogoutForChoice(input: {
+  nextName: string | null;
+  activeName: string | undefined;
+  privyAuthenticated: boolean;
+  privyName?: string;
+}): boolean {
+  if (!externalWalletChoiceEndsPrivy(input.nextName)) return false;
+  return shouldEndPrivySession({
+    nextName: input.nextName,
+    activeName: input.activeName,
+    privyAuthenticated: input.privyAuthenticated,
+    privyName: input.privyName,
+  });
+}
+
+export type PrivyPickAction = "not-ready" | "otp" | "connect" | "create";
+
+/**
+ * During an external switch, Privy must open login (OTP). Connecting the
+ * embedded adapter waits out the stall timer: logout removes the account
+ * `connect()` can see. A settled session with an embedded wallet still connects.
+ */
+export function decidePrivyPick(input: {
+  ready: boolean;
+  authenticated: boolean;
+  hasEmbeddedWallet: boolean;
+  externalSwitch: boolean;
+}): PrivyPickAction {
+  if (!input.ready) return "not-ready";
+  if (input.externalSwitch || !input.authenticated) return "otp";
+  if (input.hasEmbeddedWallet) return "connect";
+  return "create";
+}
+
+/**
+ * Remembered header address. It lives only while the switch job is running
+ * and the target adapter still has a key. Rozłącz, an extension lock, and a
+ * finished job all drop it so the live wallet (or „Zaloguj”) shows through.
+ */
+export function nextPinnedAddress(input: {
+  dropped: boolean;
+  jobActive: boolean;
+  adapterLive: boolean;
+  liveAddress: string | null;
+  currentPin: string | null;
+}): string | null {
+  if (input.dropped || !input.jobActive || !input.adapterLive) return null;
+  if (input.liveAddress) return input.liveAddress;
+  return input.currentPin;
+}
+
+/**
+ * Privy logout can clear the selected name after Phantom or Solflare has
+ * settled, without disconnecting that adapter. Put the name back.
+ * An extension lock clears the adapter key — leave it. Rozłącz and a newer
+ * wallet choice are not restored.
+ */
+export function shouldRestoreExternalWallet(input: {
+  target: string | null;
+  dropped: boolean;
+  guarding: boolean;
+  superseded: boolean;
+  selectedName: string | null;
+  hookConnected: boolean;
+  adapterConnected: boolean;
+  adapterHasKey: boolean;
+}): boolean {
+  if (!input.guarding || input.dropped || input.superseded || !input.target) {
+    return false;
+  }
+  if (!input.adapterConnected || !input.adapterHasKey) return false;
+  if (input.selectedName !== input.target) return true;
+  return !input.hookConnected;
+}
+
+/**
+ * `connect()` on an already-connected Phantom returns without emitting.
+ * Re-emitting lets the provider pick the key back up after a logout wipe.
+ */
+export function replayLiveConnect(
+  adapter: {
+    name: string;
+    connected: boolean;
+    publicKey: unknown;
+  } | null
+    | undefined,
+  target: string,
+): boolean {
+  if (!adapter || adapter.name !== target) return false;
+  if (!adapter.connected || adapter.publicKey == null) return false;
+  const emit = (
+    adapter as { emit?: (event: "connect", publicKey: unknown) => void }
+  ).emit;
+  emit?.("connect", adapter.publicKey);
+  return true;
 }
 
 /** Header label. A shown or pinned address beats the connecting text. */
@@ -167,10 +276,24 @@ export type ConnectRuntime = {
     disconnecting: boolean;
     targetReady: boolean;
   };
-  /** Disconnect the current adapter. Must resolve even if the wallet promise hangs. */
-  disconnectAdapter: () => Promise<void>;
+  /**
+   * Disconnect the current adapter. Must resolve even if the wallet promise hangs.
+   * `force` disconnects the target itself (Rozłącz, then the same wallet).
+   */
+  disconnectAdapter: (force?: boolean) => Promise<void>;
   select: (name: string | null) => void;
   connect: () => Promise<void>;
+  /**
+   * Same wallet was optimistically disconnected and may still look connected.
+   * Wait until that session is gone before accepting "done".
+   */
+  forceFresh?: boolean;
+  /**
+   * After the target has connected once: false means the adapter itself
+   * dropped (extension lock). The loop stops instead of prompting again.
+   * Omit to keep repairing until the stall timer.
+   */
+  adapterStillLive?: () => boolean;
   /**
    * Once, after `target` is connected. The header already shows that address.
    * Privy `logout()` belongs here so it does not run before the switch settles.
@@ -192,9 +315,27 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
   let phase: ConnectPhase = "disconnect";
   let promptedAt: number | null = null;
   let ranAfterConnected = false;
+  let awaitDrop = rt.forceFresh === true;
+  let settledOnce = false;
 
   while (!rt.isCancelled()) {
     const state = rt.getState();
+    if (awaitDrop && !state.connected && state.selectedName == null) {
+      awaitDrop = false;
+    }
+    if (state.connected && state.selectedName === rt.target) settledOnce = true;
+    // The target was up, then the adapter itself dropped (extension lock).
+    // A logout that only clears the selected name leaves the adapter live
+    // and still gets repaired below.
+    if (
+      !rt.forceFresh &&
+      settledOnce &&
+      !state.connected &&
+      rt.adapterStillLive &&
+      !rt.adapterStillLive()
+    ) {
+      return;
+    }
     const step = nextConnectStep({
       phase,
       target: rt.target,
@@ -203,6 +344,7 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
       connecting: state.connecting,
       disconnecting: state.disconnecting,
       targetReady: state.targetReady,
+      forceFresh: awaitDrop,
     });
     if (step === "done") {
       if (!ranAfterConnected && rt.afterConnected) {
@@ -226,9 +368,9 @@ export async function runConnectJob(rt: ConnectRuntime): Promise<void> {
     if (now > limit) throw new ConnectTimeoutError();
 
     if (step === "wait") {
-      if (state.connected && state.selectedName !== rt.target) {
+      if (state.connected && (awaitDrop || state.selectedName !== rt.target)) {
         phase = "disconnect";
-        await rt.disconnectAdapter();
+        await rt.disconnectAdapter(awaitDrop);
       } else if (state.connecting) {
         if (promptedAt == null) promptedAt = rt.now();
       }
