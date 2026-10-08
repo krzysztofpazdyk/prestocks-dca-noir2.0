@@ -258,3 +258,20 @@ export function nextDuplicateStep(i: {
 export function pendingLockHeld(verdict: PendingVerdict | "pending"): boolean {
   return verdict === "pending";
 }
+
+/** Mutable flag. A ref `{ current: boolean }` satisfies this. */
+export type DupCheckGate = { current: boolean };
+
+/**
+ * Sync gate around the duplicate recheck. The second click arrives before
+ * React disables the button, and `withTx` does not lock until a signature exists.
+ */
+export function tryEnterDupCheck(gate: DupCheckGate): boolean {
+  if (gate.current) return false;
+  gate.current = true;
+  return true;
+}
+
+export function leaveDupCheck(gate: DupCheckGate): void {
+  gate.current = false;
+}

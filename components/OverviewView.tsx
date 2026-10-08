@@ -28,7 +28,9 @@ import { withdrawUi } from "@/lib/predca-status";
 import {
   FAILED_EXPIRED_MSG,
   UNRESOLVED_MSG,
+  leaveDupCheck,
   nextDuplicateStep,
+  tryEnterDupCheck,
 } from "@/lib/pending-tx";
 import { TxNotice, txMessageWithLink } from "@/components/TxNotice";
 import {
@@ -117,6 +119,8 @@ export function OverviewView() {
   const buyInFlightRef = useRef(false);
   const [buyInFlight, setBuyInFlight] = useState(false);
   const sawPendingSig = useRef(false);
+  const dupCheckRef = useRef(false);
+  const [dupChecking, setDupChecking] = useState(false);
   const [dupWarn, setDupWarn] = useState<{
     kind: "deposit" | "withdraw" | "buy";
     amount: number;
@@ -305,21 +309,35 @@ export function OverviewView() {
 
   async function submitDeposit(acknowledged = false) {
     if (predca.pendingSignatureNow()) return;
-    const amt =
-      ownerUsdcCap != null ? Math.min(depositAmt, ownerUsdcCap) : depositAmt;
-    if (!(await allowDuplicate("deposit", amt, acknowledged))) return;
-    await predca.depositUsdc(
-      amt,
-      predca.status === "no_config" ? purchaseAmount : undefined,
-    );
+    if (!tryEnterDupCheck(dupCheckRef)) return;
+    setDupChecking(true);
+    try {
+      const amt =
+        ownerUsdcCap != null ? Math.min(depositAmt, ownerUsdcCap) : depositAmt;
+      if (!(await allowDuplicate("deposit", amt, acknowledged))) return;
+      await predca.depositUsdc(
+        amt,
+        predca.status === "no_config" ? purchaseAmount : undefined,
+      );
+    } finally {
+      leaveDupCheck(dupCheckRef);
+      setDupChecking(false);
+    }
   }
 
   async function submitWithdraw(acknowledged = false) {
     if (predca.pendingSignatureNow()) return;
-    const amt =
-      vaultUsdcCap != null ? Math.min(withdrawAmt, vaultUsdcCap) : withdrawAmt;
-    if (!(await allowDuplicate("withdraw", amt, acknowledged))) return;
-    await predca.withdrawUsdc(amt);
+    if (!tryEnterDupCheck(dupCheckRef)) return;
+    setDupChecking(true);
+    try {
+      const amt =
+        vaultUsdcCap != null ? Math.min(withdrawAmt, vaultUsdcCap) : withdrawAmt;
+      if (!(await allowDuplicate("withdraw", amt, acknowledged))) return;
+      await predca.withdrawUsdc(amt);
+    } finally {
+      leaveDupCheck(dupCheckRef);
+      setDupChecking(false);
+    }
   }
 
   function dupNotice(kind: "deposit" | "withdraw" | "buy", amount: number) {
@@ -336,12 +354,13 @@ export function OverviewView() {
         <p>{t("dup.warn", { action, amount })}</p>
         <button
           type="button"
+          disabled={dupChecking || predca.rechecking}
           onClick={() => {
             if (kind === "buy") void handlePurchase(true);
             else if (kind === "withdraw") void submitWithdraw(true);
             else void submitDeposit(true);
           }}
-          className="mt-2 rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider"
+          className="mt-2 rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider disabled:opacity-40"
         >
           {t("dup.sendAnyway")}
         </button>
@@ -350,8 +369,17 @@ export function OverviewView() {
   }
 
   async function handlePurchase(acknowledged = false) {
-    const intendedPreview = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
-    if (!(await allowDuplicate("buy", intendedPreview, acknowledged))) return;
+    if (!tryEnterDupCheck(dupCheckRef)) return;
+    setDupChecking(true);
+    let allowed = false;
+    try {
+      const intendedPreview = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
+      allowed = await allowDuplicate("buy", intendedPreview, acknowledged);
+    } finally {
+      leaveDupCheck(dupCheckRef);
+      setDupChecking(false);
+    }
+    if (!allowed) return;
     if (
       !tryEnterManualBuy(
         buyInFlightRef,
@@ -501,6 +529,8 @@ export function OverviewView() {
   const depositDisabled =
     sigUnresolved ||
     predca.txPending ||
+    dupChecking ||
+    predca.rechecking ||
     !canDeposit ||
     !Number.isFinite(depositAmt) ||
     depositAmt <= 0 ||
@@ -509,6 +539,8 @@ export function OverviewView() {
   const withdrawDisabled =
     sigUnresolved ||
     predca.txPending ||
+    dupChecking ||
+    predca.rechecking ||
     !Number.isFinite(withdrawAmt) ||
     withdrawAmt <= 0 ||
     withdrawOverCap ||
@@ -975,7 +1007,14 @@ export function OverviewView() {
                 <button
                   type="button"
                   onClick={() => void handlePurchase(false)}
-                  disabled={purchaseDisabled || predca.txPending || buyInFlight || sigUnresolved}
+                  disabled={
+                    purchaseDisabled ||
+                    predca.txPending ||
+                    buyInFlight ||
+                    sigUnresolved ||
+                    dupChecking ||
+                    predca.rechecking
+                  }
                   className="rounded border border-[#2dd4bf66] bg-[#0c0e12] px-2.5 py-1 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
                 >
                   {buyInFlight

@@ -176,6 +176,11 @@ function rpcReadFailure(e: unknown): string {
   return detail ? `${RPC_READ_ERROR_MSG} [${detail}]` : RPC_READ_ERROR_MSG;
 }
 
+/** Mark a sibling read as handled. A later await still receives the rejection. */
+function markHandled(p: Promise<unknown>): void {
+  void p.catch(() => {});
+}
+
 function pendingKindLabelPl(kind: PendingTxKind): string {
   switch (kind) {
     case "deposit":
@@ -363,14 +368,17 @@ function usePredcaImpl() {
     setLoading(true);
     try {
       const solPromise = fetchSolBalance(connection, owner);
+      markHandled(solPromise);
       const ownerBalPromise = mint
         ? fetchOwnerUsdcBalance(connection, owner, mint)
         : Promise.resolve(null);
+      markHandled(ownerBalPromise);
       const tokensPromise = fetchMockTokenBalances(
         connection,
         owner,
         allMockMints(),
       );
+      markHandled(tokensPromise);
 
       if (!program) {
         const [sol, ownerBal, tokens] = await Promise.all([
@@ -1067,13 +1075,11 @@ function usePredcaImpl() {
         : unresolvedRef.current.slice();
       let last: PendingVerdict = "unresolved";
       for (const rec of targets) {
-        const vaultFollow =
-          (rec.kind === "deposit" || rec.kind === "init_deposit") && isPrivy;
         last = await settleRecord(rec, {
           epoch: vaultFollowEpoch.current,
           success: successForRecord(rec),
-          requireVaultIncrease: vaultFollow,
-          vaultBefore: vaultUsdc,
+          requireVaultIncrease: false,
+          vaultBefore: null,
         });
       }
       return last;

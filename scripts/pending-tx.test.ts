@@ -13,8 +13,10 @@ import {
   decidePendingVerdict,
   expiryFromHeight,
   isBlockheightExpiredError,
+  leaveDupCheck,
   nextDuplicateStep,
   pendingLockHeld,
+  tryEnterDupCheck,
   readPendingRecords,
   removePendingRecord,
   sameActionFamily,
@@ -320,4 +322,14 @@ test("auto-buy Off stays clickable while a transaction is pending", () => {
   assert.equal(autoToggleBlocked(false, true), false);
   assert.equal(autoToggleBlocked(true, true), true);
   assert.equal(autoToggleBlocked(true, false), false);
+});
+
+test("tryEnterDupCheck lets the first click in and blocks the next until leave", () => {
+  const gate = { current: false };
+  assert.equal(tryEnterDupCheck(gate), true);
+  assert.equal(gate.current, true);
+  assert.equal(tryEnterDupCheck(gate), false);
+  leaveDupCheck(gate);
+  assert.equal(gate.current, false);
+  assert.equal(tryEnterDupCheck(gate), true);
 });
