@@ -6,7 +6,9 @@ import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { TxNotice } from "@/components/TxNotice";
-import { formatUsd } from "@/lib/predca";
+import { explorerTxUrl, formatUsd } from "@/lib/predca";
+import { UNRESOLVED_MSG } from "@/lib/pending-tx";
+import { autoToggleBlocked } from "@/lib/auto-weekly-buy";
 import { useI18n } from "@/lib/i18n";
 import {
   parseExclusions,
@@ -275,6 +277,7 @@ export function SettingsView() {
 
   async function saveWeeklyBudgetOnChain() {
     if (predca.pendingSignature != null || predca.pendingSignatureNow()) return;
+    if (predca.status === "error") return;
     writeWeeklyBudgetUsd(weekly, ownerBase58);
     predca.clearMessages();
     if (!connected || !predca.mint || !predca.config) return;
@@ -352,6 +355,26 @@ export function SettingsView() {
         <p className="mt-1 text-xs text-[#8b95a8]">{t("settings.intro")}</p>
       </div>
 
+      {predca.sessionCheckMsg ? (
+        <TxNotice message={predca.sessionCheckMsg} tone="pending" />
+      ) : null}
+      {predca.unresolvedTxs.slice(0, 2).map((rec) => (
+        <TxNotice
+          key={rec.signature}
+          tone="pending"
+          message={`${UNRESOLVED_MSG} ${rec.signature} ${explorerTxUrl(rec.signature)}`}
+          action={{
+            label: predca.rechecking ? t("tx.rechecking") : t("tx.recheck"),
+            disabled: predca.rechecking,
+            onClick: () => {
+              void predca.recheckUnresolved(rec.signature);
+            },
+          }}
+        />
+      ))}
+      {predca.unresolvedTxs.length > 2 ? (
+        <p className="text-[10px] text-[#fbbf24]">+{predca.unresolvedTxs.length - 2}</p>
+      ) : null}
       {predca.pendingMsg && (
         <TxNotice message={predca.pendingMsg} tone="pending" />
       )}
@@ -477,7 +500,7 @@ export function SettingsView() {
         {budgetDirtyOnChain && connected && predca.mint ? (
           <button
             type="button"
-            disabled={chainBusy}
+            disabled={chainBusy || predca.status === "error"}
             onClick={() => void saveWeeklyBudgetOnChain()}
             className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
           >
@@ -502,12 +525,13 @@ export function SettingsView() {
           <Toggle
             label={t("settings.autoWeekly")}
             checked={autoBuy.enabled}
-            disabled={chainBusy}
+            disabled={chainBusy && !autoBuy.enabled}
             onChange={(v) => {
               if (
-                predca.txPending ||
-                predca.pendingSignature != null ||
-                predca.pendingSignatureNow()
+                autoToggleBlocked(
+                  v,
+                  chainBusy || predca.pendingSignatureNow() != null,
+                )
               ) {
                 return;
               }

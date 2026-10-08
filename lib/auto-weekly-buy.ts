@@ -51,6 +51,11 @@ export function shouldSendEnable(cycleInFlight: boolean): boolean {
   return !cycleInFlight;
 }
 
+/** Off stays available while a transaction is in flight. On does not. */
+export function autoToggleBlocked(next: boolean, chainBusy: boolean): boolean {
+  return chainBusy && next === true;
+}
+
 /** Pending poll belongs to one pubkey. A wallet switch must not write the next one. */
 export function pendingEnableStillFor(
   pendingOwner: string | null,

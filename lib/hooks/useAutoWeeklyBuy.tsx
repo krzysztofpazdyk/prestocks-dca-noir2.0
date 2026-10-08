@@ -286,6 +286,13 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
       }
       writeWeeklyBudgetUsd(amount, cycleOwner);
       const p = predcaRef.current;
+      if (p.status === "error") {
+        bannerHoldUntilRef.current = Date.now() + BANNER_HOLD_MS;
+        setPhase("blocked");
+        setBlockReason("not_ready");
+        setMessage(p.rpcError ?? "");
+        return;
+      }
       // No UserConfig yet: do not initialize_user alone. First deposit on
       // Overview creates the account and the vault in one transaction.
       if (!p.config) {
@@ -295,9 +302,7 @@ function useAutoWeeklyBuyImpl(): AutoWeeklyBuyApi {
         setMessage(
           p.status === "loading"
             ? tRef.current("auto.status.stillLoading")
-            : p.status === "error" && p.error
-              ? p.error
-              : tRef.current("auto.status.notReady"),
+            : tRef.current("auto.status.notReady"),
         );
         return;
       }

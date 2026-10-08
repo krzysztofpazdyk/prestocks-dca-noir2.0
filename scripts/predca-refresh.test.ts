@@ -60,10 +60,9 @@ test("wallet change bumps both epochs before any refresh write", () => {
   assert.match(effect, /setPending\(null\)/);
   assert.match(effect, /setOkMsg\(null\)/);
   assert.match(effect, /reportError\(null\)/);
-  assert.match(effect, /setConfig\(null\)/);
-  assert.match(effect, /setVaultUsdc\(null\)/);
-  assert.match(effect, /setRuns\(\[\]\)/);
-  assert.match(effect, /setTokenBalances\(\[\]\)/);
+  // v4.30 stores the read in one snapshot. EMPTY_SNAPSHOT clears config, vault, runs, and tokens.
+  assert.match(effect, /setSnapshot\(EMPTY_SNAPSHOT\)/);
+  assert.match(effect, /setUnresolvedTxs\(\[\]\)/);
 
   const refreshFn = src.slice(refreshAt, src.indexOf("void refresh()"));
   assert.match(refreshFn, /refreshWriteStillCurrent\(/);

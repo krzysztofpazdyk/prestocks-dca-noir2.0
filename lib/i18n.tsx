@@ -48,6 +48,7 @@ const pl: Dict = {
   "overview.noMintHint":
     "Ustaw NEXT_PUBLIC_USDC_MINT na lokalny mock mint.",
   "overview.onChainHint": "On-chain · {cluster} · wartości z RPC",
+  "overview.rpcStale": "ostatni odczyt",
   "overview.clusterMainnet":
     "Uwaga: RPC wygląda na Mainnet — ta aplikacja jest Devnet-only. Sprawdź NEXT_PUBLIC_RPC_URL.",
   "overview.clusterNotDevnet":
@@ -137,8 +138,16 @@ const pl: Dict = {
   "purchase.disabled.tx": "Transakcja w toku…",
   "purchase.disabled.noRecs": "Zakup nieaktywny — najpierw kliknij Wygeneruj rekomendacje (top-3).",
   "purchase.disabled.notReady": "Zakup nieaktywny — najpierw wpłać USDC na Overview (konto powstaje z wpłatą).",
+  "purchase.disabled.rpcError": "Zakup nieaktywny — brak połączenia z RPC Devnet. Kliknij Odśwież.",
   "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Zrób Deposit z portfela (faucet zasila portfel, nie vault).",
   "purchase.disabled.generic": "Zakup nieaktywny — sprawdź vault, ranking i status Predca.",
+  "tx.recheck": "Sprawdź ponownie",
+  "tx.rechecking": "Sprawdzam…",
+  "dup.warn": "Poprzednia {action} ({amount} USDC) jest jeszcze niepotwierdzona i może wejść. Wysłać drugą?",
+  "dup.sendAnyway": "Wyślij mimo to",
+  "dup.action.deposit": "wpłata",
+  "dup.action.withdraw": "wypłata",
+  "dup.action.buy": "zakup",
   "msg.noRecs": "Brak rekomendacji do zakupu.",
   "msg.vaultLowOnChain":
     "Za mało USDC w vault (on-chain): {have} < {need}.",
@@ -304,6 +313,7 @@ const en: Dict = {
   "overview.noMintHint":
     "Set NEXT_PUBLIC_USDC_MINT to a local mock mint.",
   "overview.onChainHint": "On-chain · {cluster} · values from RPC",
+  "overview.rpcStale": "last read",
   "overview.clusterMainnet":
     "Warning: RPC looks like Mainnet — this app is Devnet-only. Check NEXT_PUBLIC_RPC_URL.",
   "overview.clusterNotDevnet":
@@ -393,8 +403,16 @@ const en: Dict = {
   "purchase.disabled.tx": "Transaction in progress…",
   "purchase.disabled.noRecs": "Purchase disabled — click Generate recommendations first (top-3).",
   "purchase.disabled.notReady": "Purchase disabled — deposit USDC on Overview first (the account is created with that deposit).",
+  "purchase.disabled.rpcError": "Purchase disabled — no Devnet RPC connection. Click Refresh.",
   "purchase.disabled.vaultLow": "Purchase disabled — vault has {have} USDC, need ≥ {need}. Deposit from wallet (faucet fills wallet, not vault).",
   "purchase.disabled.generic": "Purchase disabled — check vault, ranking, and Predca status.",
+  "tx.recheck": "Check again",
+  "tx.rechecking": "Checking…",
+  "dup.warn": "The previous {action} ({amount} USDC) is still unconfirmed and may land. Send another?",
+  "dup.sendAnyway": "Send anyway",
+  "dup.action.deposit": "deposit",
+  "dup.action.withdraw": "withdrawal",
+  "dup.action.buy": "purchase",
   "msg.noRecs": "No recommendations to purchase.",
   "msg.vaultLowOnChain":
     "Not enough USDC in vault (on-chain): {have} < {need}.",
