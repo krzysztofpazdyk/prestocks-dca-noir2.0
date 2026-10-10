@@ -320,6 +320,7 @@ const pl: Dict = {
   "pnl.atCostValue": "Wartość po koszcie: {value}",
   "pnl.legacyNote": "PnL dostępny dla zakupów po cenie rynkowej (wkrótce).",
   "pnl.partialNote": "PnL tylko dla zakupów po cenie rynkowej; część pozycji po koszcie.",
+  "pnl.noPriceNote": "Część zakupów po cenie rynkowej nie ma teraz ceny — PnL pominięty.",
 
   "premium.label": "Premia vs rynek: {pct}",
   "premium.noData": "Premia: brak danych",
@@ -632,6 +633,7 @@ const en: Dict = {
   "pnl.atCostValue": "Value at cost: {value}",
   "pnl.legacyNote": "PnL available for purchases at market price (coming soon).",
   "pnl.partialNote": "PnL only for market-price purchases; some positions are at cost.",
+  "pnl.noPriceNote": "Some market-price purchases have no current price — P/L skipped.",
 
   "premium.label": "Premium vs market: {pct}",
   "premium.noData": "Premium: no data",

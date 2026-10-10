@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fmtPriceClock, fmtSignedPnl, fmtUsdAmount } from "../lib/format-usd";
 import type { JupQuote } from "../lib/jup-prices";
 import { priceRows } from "../lib/price-rows";
-import { pnlSummary, runPnl, type PositionRow } from "../lib/position-value";
+import { pnlSummary, positionPnlKind, runPnl, type PositionRow } from "../lib/position-value";
 import { MINTS } from "../lib/universe";
 
 const NOW = Date.parse("2026-10-10T12:00:00Z");
@@ -252,4 +253,81 @@ test("a live row carried from cache is flagged as the last read", () => {
   const openai = rows.find((r) => r.name === "OpenAI");
   assert.ok(openai?.flags.includes("cache"));
   assert.equal(rows.find((r) => r.name === "Anduril")?.flags.includes("cache"), false);
+});
+
+test("v2 without a price counts the full cost and is not legacy", () => {
+  const summary = pnlSummary([
+    row({
+      name: "SpaceX",
+      basis: "cost",
+      costUsd: 40,
+      pricedUnits: 2,
+      legacyCostUsd: 0,
+      valueUsd: 40,
+      pnlUsd: null,
+    }),
+  ]);
+  assert.equal(summary.unpricedCostUsd, 40);
+  assert.equal(summary.hasUnpricedV2, true);
+  assert.equal(summary.hasPriced, false);
+});
+
+test("legacy-only unpriced cost is the legacy cost and is not a missing v2 price", () => {
+  const summary = pnlSummary([
+    row({ name: "Anthropic", costUsd: 90, legacyCostUsd: 90, pricedUnits: 0, valueUsd: 90 }),
+  ]);
+  assert.equal(summary.unpricedCostUsd, 90);
+  assert.equal(summary.legacyCostUsd, 90);
+  assert.equal(summary.hasUnpricedV2, false);
+});
+
+test("mixed rows price only the v2 slice and keep an unpriced v2 cost aside", () => {
+  const summary = pnlSummary([
+    row({
+      name: "OpenAI",
+      basis: "market",
+      costUsd: 80,
+      legacyCostUsd: 0,
+      pricedUnits: 2,
+      pnlUsd: 20,
+      valueUsd: 100,
+    }),
+    row({
+      name: "SpaceX",
+      basis: "cost",
+      costUsd: 40,
+      pricedUnits: 2,
+      legacyCostUsd: 0,
+      pnlUsd: null,
+      valueUsd: 40,
+    }),
+    row({ name: "Kalshi", costUsd: 15, legacyCostUsd: 15, pricedUnits: 0, valueUsd: 15 }),
+  ]);
+  assert.equal(summary.pnlUsd, 20);
+  assert.equal(summary.pricedCostUsd, 80);
+  assert.equal(summary.unpricedCostUsd, 55);
+  assert.equal(summary.hasUnpricedV2, true);
+  assert.equal(summary.hasLegacy, true);
+  assert.equal(summary.hasPriced, true);
+});
+
+test("position PnL is an em dash only for legacy cost, and no-data for unpriced v2", () => {
+  assert.equal(
+    positionPnlKind(row({ name: "Anthropic", basis: "cost", pricedUnits: 0, pnlUsd: null })),
+    "legacy",
+  );
+  assert.equal(
+    positionPnlKind(row({ name: "SpaceX", basis: "cost", pricedUnits: 2, pnlUsd: null })),
+    "nodata",
+  );
+  assert.equal(
+    positionPnlKind(row({ name: "OpenAI", basis: "market", pricedUnits: 1, pnlUsd: 4 })),
+    "value",
+  );
+  const src = readFileSync(new URL("../components/OverviewView.tsx", import.meta.url), "utf8");
+  assert.match(src, /const loading = !pricesReady;/);
+  assert.match(src, /positionPnlKind\(row\) === "legacy"/);
+  assert.match(src, /positionPnlKind\(row\) === "nodata"/);
+  assert.match(src, /summary\.unpricedCostUsd/);
+  assert.match(src, /pnl\.noPriceNote/);
 });

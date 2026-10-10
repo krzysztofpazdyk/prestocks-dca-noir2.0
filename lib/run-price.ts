@@ -112,12 +112,29 @@ export function decodeRunPriceAccount(
   return { owner, runIndex, mints, usdcEach, units, pricesE6, priceTs, bump };
 }
 
-/** Batch-read RunPrice PDAs. RPC failure → all null (legacy) and a warning. */
+export type RunPriceFetch = {
+  map: Map<number, DecodedRunPrice | null>;
+  ok: boolean;
+};
+
+/**
+ * Keep the previous map when the RPC read failed.
+ * A successful read replaces the map, including real nulls (no RunPrice account).
+ */
+export function mergeRunPrices<T>(
+  prev: ReadonlyMap<number, T | null>,
+  next: { map: ReadonlyMap<number, T | null>; ok: boolean },
+): Map<number, T | null> {
+  if (!next.ok) return new Map(prev);
+  return new Map(next.map);
+}
+
+/** Batch-read RunPrice PDAs. RPC failure → ok false so the caller keeps the previous map. */
 export async function fetchRunPrices(
   connection: Connection,
   owner: PublicKey,
   runIndices: number[],
-): Promise<Map<number, DecodedRunPrice | null>> {
+): Promise<RunPriceFetch> {
   const program = programId();
   const unique = [...new Set(runIndices)];
   const out = new Map<number, DecodedRunPrice | null>();
@@ -132,7 +149,8 @@ export async function fetchRunPrices(
       });
     }
   } catch (e) {
-    console.warn("RunPrice: odczyt nieudany, loty legacy", e);
+    console.warn("RunPrice: odczyt nieudany, zostawiam poprzednią mapę", e);
+    return { map: out, ok: false };
   }
-  return out;
+  return { map: out, ok: true };
 }

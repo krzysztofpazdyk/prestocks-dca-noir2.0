@@ -12,7 +12,7 @@ import {
   type JupPrices,
 } from "@/lib/jup-prices";
 import { priceRows, type PriceRowFlag } from "@/lib/price-rows";
-import { pnlSummary, type PositionRow } from "@/lib/position-value";
+import { pnlSummary, positionPnlKind, type PositionRow } from "@/lib/position-value";
 import {
   DEFAULT_SETTINGS,
   HOLDINGS,
@@ -1055,7 +1055,10 @@ export function OverviewView() {
           {pricesReady && !predca.pricesLoading && !anyTokenPrice && (
             <p>{t("prices.unavailable")}</p>
           )}
-          {allAtCost && <p>{t("positions.legacyHint")}</p>}
+          {allAtCost &&
+            !(connected && predca.positions.length > 0 && !pnlSummary(predca.positions).hasPriced) && (
+              <p>{t("positions.legacyHint")}</p>
+            )}
         </div>
       )}
 
@@ -1284,7 +1287,7 @@ function PricesPanel({
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
-  const loading = !pricesReady || (pricesLoading && !pricesReady);
+  const loading = !pricesReady;
   const rows = priceRows(prices.quotes, prices.fetchedAt, prices);
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
@@ -1375,7 +1378,7 @@ function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
   const neg = pnl != null && pnl < 0;
   const pnlClass = pos ? "text-[#34d399]" : neg ? "text-[#f87171]" : "text-[#8b95a8]";
   const money = summary.hasPriced ? fmtSignedPnl(pnl, summary.pnlPct, locale) : null;
-  const atCost = fmtUsdAmount(summary.legacyCostUsd, locale);
+  const atCost = fmtUsdAmount(summary.unpricedCostUsd, locale);
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
       <h2 className="mb-2 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
@@ -1390,7 +1393,10 @@ function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
           {t("pnl.atCostValue", { value: atCost ?? t("positions.noData") })}
         </p>
       )}
-      {!summary.hasPriced && (
+      {summary.hasUnpricedV2 && (
+        <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.noPriceNote")}</p>
+      )}
+      {!summary.hasPriced && summary.hasLegacy && (
         <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.legacyNote")}</p>
       )}
       {summary.hasPriced && summary.hasLegacy && (
@@ -1482,9 +1488,9 @@ function PositionsCard({
                     {fmtUsdAmount(row.avgBuyPrice, locale) ?? "—"}
                   </td>
                   <td className={`mono-num py-2 ${pnlClass}`}>
-                    {row.basis === "cost" ? (
+                    {positionPnlKind(row) === "legacy" ? (
                       <span title={t("pnl.legacyNote")}>—</span>
-                    ) : row.pnlUsd == null ? (
+                    ) : positionPnlKind(row) === "nodata" ? (
                       t("positions.noData")
                     ) : (
                       fmtSignedPnl(row.pnlUsd, row.pnlPct, locale)
