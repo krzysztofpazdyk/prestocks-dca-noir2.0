@@ -1,5 +1,5 @@
 /**
- * Rows for the Overview "Ceny i premie" panel.
+ * Rows for the Overview "Ceny tokenów vs wycena spółek" panel.
  * Universe only: the 8 `MINTS` names, alphabetical. No xAI, no OURA.
  */
 

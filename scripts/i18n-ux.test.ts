@@ -104,7 +104,7 @@ test("Overview and Trading desk stay English in the Polish dictionary", () => {
   assert.match(pl, /on-chain/);
   assert.equal(values("history.buyPrice")[0], "po {price} · {units} szt.");
   assert.equal(values("history.buyPrice")[1], "at {price} · {units} units");
-  assert.equal(values("prices.panelTitle")[0], "Ceny i premie");
+  assert.equal(values("prices.panelTitle")[0], "Ceny tokenów vs wycena spółek");
   assert.equal(values("prices.lastRead")[0], "ostatni odczyt · {time}");
   assert.equal(values("pnl.legacyNote")[1], "PnL available for purchases at market price (coming soon).");
   const history = readFileSync(
