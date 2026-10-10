@@ -210,6 +210,101 @@ export function buildPositions(
   return rows;
 }
 
+export type PnlSummary = {
+  /** Sum of row PnL. Null when no row has a market PnL — never a fake 0. */
+  pnlUsd: number | null;
+  /** pnlUsd / v2 cost of those rows, in percent. */
+  pnlPct: number | null;
+  /** v2 cost (costUsd − legacyCostUsd) of rows that have a PnL. */
+  pricedCostUsd: number;
+  /** Legacy cost of every row. Stays out of the PnL. */
+  legacyCostUsd: number;
+  hasLegacy: boolean;
+  hasPriced: boolean;
+};
+
+/** Portfolio PnL from rows `buildPositions` already produced. Does not revalue. */
+export function pnlSummary(rows: PositionRow[]): PnlSummary {
+  let pnlUsd = 0;
+  let pricedCostUsd = 0;
+  let legacyCostUsd = 0;
+  let hasPriced = false;
+  for (const row of rows) {
+    if (Number.isFinite(row.legacyCostUsd)) legacyCostUsd += row.legacyCostUsd;
+    if (row.pnlUsd == null || !Number.isFinite(row.pnlUsd)) continue;
+    hasPriced = true;
+    pnlUsd += row.pnlUsd;
+    const v2Cost = row.costUsd - row.legacyCostUsd;
+    if (Number.isFinite(v2Cost)) pricedCostUsd += v2Cost;
+  }
+  return {
+    pnlUsd: hasPriced ? pnlUsd : null,
+    pnlPct: hasPriced && pricedCostUsd > DUST ? (pnlUsd / pricedCostUsd) * 100 : null,
+    pricedCostUsd: hasPriced ? pricedCostUsd : 0,
+    legacyCostUsd,
+    hasLegacy: legacyCostUsd > DUST,
+    hasPriced,
+  };
+}
+
+export type RunPnlLeg = {
+  name: string;
+  valueUsd: number;
+  pnlUsd: number;
+  pnlPct: number | null;
+};
+
+export type RunPnlResult = {
+  legs: Array<RunPnlLeg | null>;
+  totalPnlUsd: number | null;
+  totalPnlPct: number | null;
+};
+
+/**
+ * PnL of one run against current Jupiter prices.
+ * `slots === null` means no RunPrice account — the run stays unlabeled.
+ * A leg with no current price is null and is left out of the total.
+ */
+export function runPnl(
+  slots: Array<{ units: number; price: number } | null> | null,
+  usdcEach: number[],
+  quotes: Record<string, JupQuote>,
+  names: string[],
+): RunPnlResult | null {
+  if (slots == null) return null;
+  const n = Math.max(slots.length, usdcEach.length, names.length);
+  const legs: Array<RunPnlLeg | null> = [];
+  let totalPnl = 0;
+  let totalCost = 0;
+  let any = false;
+  for (let i = 0; i < n; i++) {
+    const slot = slots[i] ?? null;
+    const name = names[i] ?? "";
+    const usdc = usdcEach[i];
+    const px = name ? quoteByName(quotes, name)?.usdPrice ?? null : null;
+    if (!slot || px == null || !Number.isFinite(usdc)) {
+      legs.push(null);
+      continue;
+    }
+    const valueUsd = slot.units * px;
+    const pnlUsd = valueUsd - usdc;
+    legs.push({
+      name,
+      valueUsd,
+      pnlUsd,
+      pnlPct: usdc > DUST ? (pnlUsd / usdc) * 100 : null,
+    });
+    totalPnl += pnlUsd;
+    totalCost += usdc;
+    any = true;
+  }
+  return {
+    legs,
+    totalPnlUsd: any ? totalPnl : null,
+    totalPnlPct: any && totalCost > DUST ? (totalPnl / totalCost) * 100 : null,
+  };
+}
+
 export function portfolioValue(vaultUsdc: number, rows: PositionRow[]): number {
   const vault = Number.isFinite(vaultUsdc) ? vaultUsdc : 0;
   return rows.reduce((sum, row) => sum + (Number.isFinite(row.valueUsd) ? row.valueUsd : 0), vault);

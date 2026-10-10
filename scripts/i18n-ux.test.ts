@@ -56,6 +56,20 @@ test("jupiter price and position keys exist in Polish and English", () => {
     "prices.suspect",
     "prices.lowLiquidity",
     "prices.multiplier",
+    "prices.panelTitle",
+    "prices.col.company",
+    "prices.col.price",
+    "prices.col.premium",
+    "prices.col.status",
+    "prices.loading",
+    "prices.lastRead",
+    "pnl.title",
+    "pnl.total",
+    "pnl.atCostValue",
+    "pnl.legacyNote",
+    "pnl.partialNote",
+    "history.legPnl",
+    "history.runPnl",
     "premium.label",
     "premium.noData",
     "premium.estimate",
@@ -87,4 +101,15 @@ test("Overview and Trading desk stay English in the Polish dictionary", () => {
   assert.doesNotMatch(pl, /"positions\.title": "[^"]*Hint/);
   assert.equal(values("overview.rpcStale")[0], "ostatni odczyt");
   assert.notEqual(values("prices.stale")[0], values("overview.rpcStale")[0]);
+  assert.match(pl, /on-chain/);
+  assert.equal(values("history.buyPrice")[0], "po {price} · {units} szt.");
+  assert.equal(values("history.buyPrice")[1], "at {price} · {units} units");
+  assert.equal(values("prices.panelTitle")[0], "Ceny i premie");
+  assert.equal(values("prices.lastRead")[0], "ostatni odczyt · {time}");
+  assert.equal(values("pnl.legacyNote")[1], "PnL available for purchases at market price (coming soon).");
+  const history = readFileSync(
+    new URL("../components/HistoryView.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(history, />\s*on-chain\s*</);
 });

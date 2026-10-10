@@ -12,6 +12,8 @@ import {
   shortPk,
   type RunRecordData,
 } from "@/lib/predca";
+import { fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
+import { runPnl } from "@/lib/position-value";
 import { useI18n } from "@/lib/i18n";
 
 function mintLabel(mint: RunRecordData["mints"][number]): string {
@@ -31,7 +33,7 @@ function fmtUnits(n: number): string {
 export function HistoryView() {
   const { connected } = useWallet();
   const predca = usePredca();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const ready = connected && predca.status === "ready";
   const loading = connected && predca.loading && predca.status === "loading";
   const hasRuns = ready && predca.runs.length > 0;
@@ -100,6 +102,25 @@ export function HistoryView() {
             const fill = predca.runFills.find(
               (row) => row.runIndex === run.runIndex.toString(),
             );
+            const names = run.mints.map((m) => mintLabel(m));
+            const usdcEach = run.amounts.map((a) => rawToDollars(a));
+            const pnl = runPnl(
+              fill?.slots ?? null,
+              usdcEach,
+              predca.jupPrices.quotes,
+              names,
+            );
+            const runPnlText =
+              pnl?.totalPnlUsd != null
+                ? fmtSignedPnl(pnl.totalPnlUsd, pnl.totalPnlPct, locale)
+                : null;
+            const runPos = pnl?.totalPnlUsd != null && pnl.totalPnlUsd > 0;
+            const runNeg = pnl?.totalPnlUsd != null && pnl.totalPnlUsd < 0;
+            const runClass = runPos
+              ? "text-[#34d399]"
+              : runNeg
+                ? "text-[#f87171]"
+                : "text-[#8b95a8]";
             return (
               <li
                 key={run.runIndex.toString()}
@@ -117,6 +138,11 @@ export function HistoryView() {
                         slot: run.slot.toString(),
                       })}
                     </p>
+                    {runPnlText && (
+                      <p className={`mono-num text-xs ${runClass}`}>
+                        {t("history.runPnl", { pnl: runPnlText })}
+                      </p>
+                    )}
                   </div>
                   <span className="mono-num rounded border border-[#2dd4bf44] px-2 py-1 text-[11px] text-[#2dd4bf]">
                     on-chain
@@ -125,6 +151,7 @@ export function HistoryView() {
                 <ul className="mt-3 grid gap-1 sm:grid-cols-3">
                   {run.mints.map((m, i) => {
                     const slot = fill?.slots?.[i] ?? null;
+                    const leg = pnl?.legs[i] ?? null;
                     return (
                     <li
                       key={`${run.runIndex.toString()}-${i}`}
@@ -137,9 +164,21 @@ export function HistoryView() {
                       {slot ? (
                         <span className="mono-num mt-0.5 block text-[10px] text-[#8b95a8]">
                           {t("history.buyPrice", {
-                            price: formatUsd(slot.price),
+                            price: fmtUsdAmount(slot.price, locale) ?? t("positions.noData"),
                             units: fmtUnits(slot.units),
                           })}
+                          {leg ? (
+                            <span className="mt-0.5 block">
+                              {t("history.legPnl", {
+                                value:
+                                  fmtUsdAmount(leg.valueUsd, locale) ??
+                                  t("positions.noData"),
+                                pnl:
+                                  fmtSignedPnl(leg.pnlUsd, leg.pnlPct, locale) ??
+                                  t("positions.noData"),
+                              })}
+                            </span>
+                          ) : null}
                         </span>
                       ) : null}
                     </li>
