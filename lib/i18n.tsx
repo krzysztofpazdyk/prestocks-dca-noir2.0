@@ -112,6 +112,7 @@ const pl: Dict = {
 
   "top3.title": "Top-3 · rekomendacje",
   "top3.titleLive": "Top-3 · ranking (live)",
+  "top3.restored": "z {time}",
   "btn.generate": "Wygeneruj rekomendacje",
   "btn.generating": "Generuję…",
   "btn.purchase": "Dokonaj zakupu",
@@ -438,6 +439,7 @@ const en: Dict = {
 
   "top3.title": "Top-3 · recommendations",
   "top3.titleLive": "Top-3 · ranking (live)",
+  "top3.restored": "from {time}",
   "btn.generate": "Generate recommendations",
   "btn.generating": "Generating…",
   "btn.purchase": "Purchase",

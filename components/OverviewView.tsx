@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
@@ -51,7 +51,16 @@ import {
 } from "@/lib/predca";
 import { livePremiumPct } from "@/lib/premium-view";
 import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
-import { isFlatFallback, runRankingNow } from "@/lib/ranking";
+import {
+  isFlatFallback,
+  parseRankSession,
+  rankPrefsKey,
+  rankSessionClientSnapshot,
+  rankSessionServerSnapshot,
+  restoreRankSession,
+  runRankingNow,
+  subscribeRankSession,
+} from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/app-version";
 import type { RankResult } from "@/lib/universe";
@@ -99,6 +108,30 @@ type TopPick = {
   premiumSource: string;
 };
 
+type RankView = {
+  top3: TopPick[];
+  title: string | null;
+  subtitle: string | null;
+  premiumBasis: RankResult["premiumBasis"];
+  rankFlat: boolean;
+};
+
+function rankView(result: RankResult, locale: string): RankView {
+  return {
+    top3: result.top3.slice(0, 3).map((row) => ({
+      name: row.name,
+      score: row.score,
+      priceNow: row.token_price_usd,
+      premiumPct: Number.isFinite(row.premium_pct) ? row.premium_pct : null,
+      premiumSource: row.premium_source,
+    })),
+    title: top3TitleFromRank(result, locale),
+    subtitle: result.sourceLabel || null,
+    premiumBasis: result.premiumBasis,
+    rankFlat: isFlatFallback(result),
+  };
+}
+
 function emptyPurchase(): Purchase {
   return {
     date: "—",
@@ -126,13 +159,15 @@ export function OverviewView() {
   const [portfolioRevision, setPortfolioRevision] = useState(0);
   const [depositAmt, setDepositAmt] = useState(500);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
-  const [top3, setTop3] = useState<TopPick[]>([]);
-  const [top3Title, setTop3Title] = useState<string | null>(null);
-  const [top3Subtitle, setTop3Subtitle] = useState<string | null>(null);
-  const [premiumBasis, setPremiumBasis] = useState<RankResult["premiumBasis"] | null>(
-    null,
+  const [generated, setGenerated] = useState<RankView | null>(null);
+  const sessionSnap = useSyncExternalStore(
+    subscribeRankSession,
+    rankSessionClientSnapshot,
+    rankSessionServerSnapshot,
   );
-  const [rankFlat, setRankFlat] = useState(false);
+  useEffect(() => {
+    restoreRankSession(rankPrefsKey());
+  }, []);
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -271,19 +306,7 @@ export function OverviewView() {
       if (result.error && (!result.top3 || result.top3.length === 0)) {
         throw new Error(result.error);
       }
-      setTop3(
-        result.top3.slice(0, 3).map((r) => ({
-          name: r.name,
-          score: r.score,
-          priceNow: r.token_price_usd,
-          premiumPct: Number.isFinite(r.premium_pct) ? r.premium_pct : null,
-          premiumSource: r.premium_source,
-        })),
-      );
-      setTop3Title(top3TitleFromRank(result, locale));
-      setTop3Subtitle(result.sourceLabel || null);
-      setPremiumBasis(result.premiumBasis);
-      setRankFlat(isFlatFallback(result));
+      setGenerated(rankView(result, locale));
       const notes: string[] = [];
       if (productsResult.dataSource === "snapshot") {
         notes.push(
@@ -585,6 +608,16 @@ export function OverviewView() {
     withdrawOverCap ||
     withdrawPresentation === "disabled";
   const showWithdraw = withdrawPresentation !== "hidden";
+  const restored = generated ? null : parseRankSession(sessionSnap.raw, rankPrefsKey());
+  const active = generated ?? (restored ? rankView(restored.rank, locale) : null);
+  const top3 = active?.top3 ?? [];
+  const top3Title = active?.title ?? null;
+  const top3Subtitle = active?.subtitle ?? null;
+  const premiumBasis = active?.premiumBasis ?? null;
+  const rankFlat = active?.rankFlat ?? false;
+  const restoredClock = restored
+    ? fmtPriceClock(restored.savedAt, priceNow, locale)
+    : "";
   const vaultTooLow =
     availableVaultUsdc == null ||
     !Number.isFinite(availableVaultUsdc) ||
@@ -1105,6 +1138,11 @@ export function OverviewView() {
                 {top3Subtitle ? (
                   <p className="mt-0.5 text-[10px] normal-case tracking-normal text-[#8b95a8]">
                     {top3Subtitle}
+                  </p>
+                ) : null}
+                {restoredClock ? (
+                  <p className="mt-0.5 text-[10px] normal-case tracking-normal text-[#8b95a8]">
+                    {t("top3.restored", { time: restoredClock })}
                   </p>
                 ) : null}
               </div>
