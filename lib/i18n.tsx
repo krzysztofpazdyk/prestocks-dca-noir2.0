@@ -116,6 +116,8 @@ const pl: Dict = {
   "btn.generate": "Wygeneruj rekomendacje",
   "btn.generating": "Generuję…",
   "btn.purchase": "Dokonaj zakupu",
+  "btn.confirm": "Potwierdź",
+  "btn.cancel": "Anuluj",
   "btn.buying": "Kupuję…",
   "btn.waiting": "Czekam na potwierdzenie…",
   "btn.txPending": "Transakcja…",
@@ -144,6 +146,7 @@ const pl: Dict = {
   "purchase.disabled.notReady": "Zakup nieaktywny — najpierw wpłać USDC na Overview (konto powstaje z wpłatą).",
   "purchase.disabled.rpcError": "Zakup nieaktywny — brak połączenia z RPC Devnet. Kliknij Odśwież.",
   "purchase.disabled.flatRanking": "Zakup nieaktywny — ranking awaryjny nie rozróżnia spółek (wszystkie 50,0). Spróbuj ponownie później albo włącz „Premia IPO ma znaczenie”.",
+  "purchase.confirmBudget": "Zmienię budżet on-chain z {from} na {to} USDC i kupię. Potwierdzić?",
   "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Wpłać z portfela (faucet zasila portfel, nie vault).",
   "purchase.disabled.generic": "Zakup nieaktywny — sprawdź vault, ranking i status Predca.",
   "tx.recheck": "Sprawdź ponownie",
@@ -219,6 +222,7 @@ const pl: Dict = {
   "settings.intro":
     "Tygodniowa kwota zapisuje się lokalnie od razu. Konto on-chain powstaje przy pierwszej wpłacie na Overview. Potem budżet zmienia „Zapisz budżet on-chain”, Manual Buy albo włączenie auto-zakupu. BYOK zostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
+  "settings.weeklyInvalid": "Podaj kwotę ≥ 1 USDC, max 2 miejsca po przecinku.",
   "settings.weeklyAtEnable":
     "Zapis lokalny od razu. Bez konta Predca kwota on-chain powstaje przy wpłacie na Overview.",
   "settings.budgetNeedsDeposit":
@@ -443,6 +447,8 @@ const en: Dict = {
   "btn.generate": "Generate recommendations",
   "btn.generating": "Generating…",
   "btn.purchase": "Purchase",
+  "btn.confirm": "Confirm",
+  "btn.cancel": "Cancel",
   "btn.buying": "Buying…",
   "btn.waiting": "Waiting for confirmation…",
   "btn.txPending": "Transaction…",
@@ -471,6 +477,7 @@ const en: Dict = {
   "purchase.disabled.notReady": "Purchase disabled — deposit USDC on Overview first (the account is created with that deposit).",
   "purchase.disabled.rpcError": "Purchase disabled — no Devnet RPC connection. Click Refresh.",
   "purchase.disabled.flatRanking": "Purchase disabled — the backup ranking can't tell names apart (all 50.0). Try again later or turn on “IPO premium matters”.",
+  "purchase.confirmBudget": "I'll change the on-chain budget from {from} to {to} USDC and buy. Confirm?",
   "purchase.disabled.vaultLow": "Purchase disabled — vault has {have} USDC, need ≥ {need}. Deposit from wallet (faucet fills wallet, not vault).",
   "purchase.disabled.generic": "Purchase disabled — check vault, ranking, and Predca status.",
   "tx.recheck": "Check again",
@@ -546,6 +553,7 @@ const en: Dict = {
   "settings.intro":
     "The weekly amount saves locally right away. The on-chain account is created with the first deposit on Overview. After that, change the budget with “Save budget on-chain”, Manual Buy, or by enabling auto-buy. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
+  "settings.weeklyInvalid": "Enter an amount ≥ 1 USDC, at most 2 decimals.",
   "settings.weeklyAtEnable":
     "Saved locally right away. Until a Predca account exists, the on-chain amount is set by the deposit on Overview.",
   "settings.budgetNeedsDeposit":

@@ -29,6 +29,11 @@ import {
   type PortfolioBalances,
 } from "@/lib/portfolio-state";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
+import {
+  budgetsDiffer,
+  needsBudgetConfirm,
+  WEEKLY_BUDGET_EPS,
+} from "@/lib/weekly-budget";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
@@ -82,7 +87,7 @@ function top3TitleFromRank(result: RankResult, locale: string): string {
   return locale === "en" ? "Top-3 · ranking" : "Top-3 · ranking";
 }
 
-const BUDGET_EPS = 0.000001;
+const BUDGET_EPS = WEEKLY_BUDGET_EPS;
 
 /** Intended buy amount: Settings LS is SoT; on-chain is synced before Manual Buy. */
 function resolvePurchaseAmount(
@@ -93,11 +98,6 @@ function resolvePurchaseAmount(
   if (ls > 0) return ls;
   if (onChainWeeklyUsd != null && onChainWeeklyUsd > 0) return onChainWeeklyUsd;
   return DEFAULT_SETTINGS.weeklyAmountUsd;
-}
-
-function budgetsDiffer(ls: number, onChain: number | null): boolean {
-  if (onChain == null || !Number.isFinite(onChain)) return ls > 0;
-  return Math.abs(ls - onChain) > BUDGET_EPS;
 }
 
 type TopPick = {
@@ -182,6 +182,12 @@ export function OverviewView() {
     kind: "deposit" | "withdraw" | "buy";
     amount: number;
   } | null>(null);
+  const [budgetPrompt, setBudgetPrompt] = useState<{
+    from: number;
+    to: number;
+  } | null>(null);
+  /** Last on-chain change the user already confirmed, so a dup retry does not ask again. */
+  const budgetConfirmedPair = useRef<{ ls: number; chain: number } | null>(null);
   const [priceNow, setPriceNow] = useState(UI_CLOCK_AT);
   const sigUnresolved = predca.pendingSignature != null;
 
@@ -432,7 +438,35 @@ export function OverviewView() {
     );
   }
 
-  async function handlePurchase(acknowledged = false) {
+  function acceptBudgetAndBuy() {
+    const prompt = budgetPrompt;
+    if (!prompt) return;
+    budgetConfirmedPair.current = { ls: prompt.to, chain: prompt.from };
+    setBudgetPrompt(null);
+    void handlePurchase(false, true);
+  }
+
+  async function handlePurchase(acknowledged = false, budgetConfirmed = false) {
+    const lsAmountNow = readWeeklyBudgetUsd(
+      DEFAULT_SETTINGS.weeklyAmountUsd,
+      ownerBase58,
+    );
+    const chainNow = predca.weeklyBudgetUsd;
+    const remembered = budgetConfirmedPair.current;
+    const alreadyConfirmed =
+      budgetConfirmed ||
+      (remembered != null &&
+        chainNow != null &&
+        Math.abs(remembered.ls - lsAmountNow) <= BUDGET_EPS &&
+        Math.abs(remembered.chain - chainNow) <= BUDGET_EPS);
+    if (
+      onChainReady &&
+      chainNow != null &&
+      needsBudgetConfirm(lsAmountNow, chainNow, alreadyConfirmed)
+    ) {
+      setBudgetPrompt({ from: chainNow, to: lsAmountNow });
+      return;
+    }
     if (!tryEnterDupCheck(dupCheckRef)) return;
     setDupChecking(true);
     let allowed = false;
@@ -1228,6 +1262,32 @@ export function OverviewView() {
                 {purchaseDisabledReason}
               </p>
             )}
+            {budgetPrompt ? (
+              <div className="mt-3 rounded border border-[#fbbf2433] bg-[#fbbf2411] px-3 py-2 text-xs text-[#fbbf24]">
+                <p>
+                  {t("purchase.confirmBudget", {
+                    from: formatUsd(budgetPrompt.from),
+                    to: formatUsd(budgetPrompt.to),
+                  })}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={acceptBudgetAndBuy}
+                    className="rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider"
+                  >
+                    {t("btn.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBudgetPrompt(null)}
+                    className="rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider"
+                  >
+                    {t("btn.cancel")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {dupNotice("buy", resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58))}
             {purchaseMsg && (
               <p
