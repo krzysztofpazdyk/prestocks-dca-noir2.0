@@ -4,9 +4,10 @@ import test from "node:test";
 import { rankResultFromProxy } from "../lib/dca-api";
 import { emptyJupPrices } from "../lib/jup-prices";
 import { dcaApiBase, LS_XAI } from "../lib/keys";
+import { metricsRank } from "../lib/metrics-rank";
 import { fetchPrestocksProducts } from "../lib/prestocks";
 import { isFlatFallback } from "../lib/ranking";
-import { MINTS, type RankResult, type RankRow } from "../lib/universe";
+import { MINTS, type PrestocksProduct, type RankResult, type RankRow } from "../lib/universe";
 
 function rank(partial: Partial<RankResult>): RankResult {
   return {
@@ -187,4 +188,123 @@ test("flat-ranking copy exists in Polish and English", () => {
     "Zakup nieaktywny — ranking awaryjny nie rozróżnia spółek (wszystkie 50,0). Spróbuj ponownie później albo włącz „Premia IPO ma znaczenie”.",
     "Purchase disabled — the backup ranking can't tell names apart (all 50.0). Try again later or turn on “IPO premium matters”.",
   ]);
+});
+
+function hostedProduct(name: string, nearIpo: boolean): PrestocksProduct {
+  return {
+    name,
+    symbol: name.toUpperCase(),
+    mint: MINTS[name] ?? "",
+    token_price_usd: 2,
+    mark_price_usd: null,
+    premium_pct: -21.7,
+    premium_source: "hardcoded_fallback",
+    near_ipo: nearIpo,
+  };
+}
+
+function withBrowser(run: () => Promise<void>): Promise<void> {
+  const prevFetch = globalThis.fetch;
+  const prevWindow = globalThis.window;
+  const prevApi = process.env.NEXT_PUBLIC_DCA_API_URL;
+  return run().finally(() => {
+    globalThis.fetch = prevFetch;
+    if (prevWindow === undefined) delete (globalThis as { window?: Window }).window;
+    else globalThis.window = prevWindow;
+    if (prevApi === undefined) delete process.env.NEXT_PUBLIC_DCA_API_URL;
+    else process.env.NEXT_PUBLIC_DCA_API_URL = prevApi;
+  });
+}
+
+test("hosted products and the snapshot do not keep a server near-IPO flag", async () => {
+  await withBrowser(async () => {
+    process.env.NEXT_PUBLIC_DCA_API_URL = "https://predca-api.example/";
+    (globalThis as { window?: Window }).window = {
+      location: {
+        hostname: "krzysztofpazdyk.github.io",
+        origin: "https://krzysztofpazdyk.github.io",
+      },
+    } as Window;
+    const products = Object.keys(MINTS).map((name) =>
+      hostedProduct(name, name === "SpaceX"),
+    );
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/prestocks/products")) {
+        return new Response(JSON.stringify({ products }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 404 });
+    }) as typeof fetch;
+
+    const got = await fetchPrestocksProducts(emptyJupPrices(1_700_000_000_000));
+    assert.equal(got.products.find((row) => row.name === "SpaceX")?.near_ipo, false);
+    const ranked = metricsRank(got.products, [], {
+      premiumsMatter: true,
+      premiumsEspeciallyNearIpo: true,
+      buyDespiteIpo: false,
+      deadlinesUnimportant: false,
+    });
+    assert.equal(ranked.scores.every((row) => row.score === 50), true);
+    assert.equal(isFlatFallback(ranked), true);
+  });
+});
+
+test("a static snapshot drops SpaceX near IPO, and fresh announced data can set it", async () => {
+  await withBrowser(async () => {
+    delete process.env.NEXT_PUBLIC_DCA_API_URL;
+    (globalThis as { window?: Window }).window = {
+      location: {
+        hostname: "krzysztofpazdyk.github.io",
+        origin: "https://krzysztofpazdyk.github.io",
+      },
+    } as Window;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("prestocks-snapshot")) {
+        return new Response(
+          JSON.stringify({
+            products: [hostedProduct("SpaceX", true), hostedProduct("Kalshi", false)],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    const snap = await fetchPrestocksProducts(emptyJupPrices(1_700_000_000_000));
+    assert.equal(snap.dataSource, "snapshot");
+    assert.equal(snap.products.find((row) => row.name === "SpaceX")?.near_ipo, false);
+  });
+
+  await withBrowser(async () => {
+    process.env.NEXT_PUBLIC_DCA_API_URL = "https://predca-api.example/";
+    (globalThis as { window?: Window }).window = {
+      location: {
+        hostname: "krzysztofpazdyk.github.io",
+        origin: "https://krzysztofpazdyk.github.io",
+      },
+    } as Window;
+    const soon = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const checked = new Date().toISOString();
+    const products = Object.keys(MINTS).map((name) => {
+      const row = hostedProduct(name, name === "SpaceX");
+      if (name !== "Kalshi") return row;
+      return {
+        ...row,
+        ipoStatus: "announced",
+        ipoDate: soon,
+        source: "https://example.com/kalshi",
+        checkedAt: checked,
+      };
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/prestocks/products")) {
+        return new Response(JSON.stringify({ products }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: false }), { status: 404 });
+    }) as typeof fetch;
+    const got = await fetchPrestocksProducts(emptyJupPrices(1_700_000_000_000));
+    assert.equal(got.products.find((row) => row.name === "SpaceX")?.near_ipo, false);
+    assert.equal(got.products.find((row) => row.name === "Kalshi")?.near_ipo, true);
+  });
 });

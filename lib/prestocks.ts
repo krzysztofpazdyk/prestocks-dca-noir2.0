@@ -10,6 +10,7 @@ import {
   rememberCompanyRecords,
 } from "@/lib/company-data";
 import {
+  canonicalName,
   fetchJupPrices,
   ipoPremiumPct,
   quoteByName,
@@ -316,11 +317,21 @@ function localLiveProxyUrl(): string | null {
   return `${window.location.origin}${base}/api/prestocks/live/`;
 }
 
+function listedNearIpo(name: string): boolean {
+  const want = canonicalName(name);
+  return NEAR_IPO_NAMES.some((entry) => canonicalName(entry) === want);
+}
+
 function finishProducts(products: PrestocksProduct[]): PrestocksProduct[] {
   const now = Date.now();
-  const incoming = companyDataFromProducts(products, now);
+  // Server and snapshot flags are not a source. Only the client list, then fresh company data.
+  const grounded = products.map((product) => ({
+    ...product,
+    near_ipo: listedNearIpo(product.name),
+  }));
+  const incoming = companyDataFromProducts(grounded, now);
   const byName = rememberCompanyRecords(incoming, now);
-  return applyCompanyData(products, byName, now);
+  return applyCompanyData(grounded, byName, now);
 }
 
 function skipDirectPrestocks(): boolean {

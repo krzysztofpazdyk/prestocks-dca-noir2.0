@@ -206,10 +206,6 @@ test("no company data leaves products unchanged and both toggles off", () => {
   const next = applyCompanyData(rows, {}, NOW);
   assert.deepEqual(next, rows);
   assert.equal(next[0], rows[0]);
-  const flagged = [product("SpaceX", { near_ipo: true })];
-  const kept = applyCompanyData(flagged, {}, NOW);
-  assert.equal(kept[0], flagged[0]);
-  assert.equal(kept[0].near_ipo, true);
 });
 
 test("fresh listed SpaceX enables the IPO toggle and the IPO filter drops only SpaceX", () => {
