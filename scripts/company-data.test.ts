@@ -172,6 +172,37 @@ test("rankResultFromProxy reports the server premium basis and does not mark unk
   assert.equal(ignored.premiumBasis, "none");
 });
 
+test("a server metrics fallback is a server estimate, and the client fallback is live", () => {
+  const server = rankResultFromProxy(
+    {
+      ok: true,
+      top3: [{ name: "OpenAI", score: 1 }],
+      pipeline: ["prestocks", "metrics_rank"],
+    },
+    [],
+    { premiumsMatter: true },
+  );
+  assert.equal(server.mode, "metrics_fallback");
+  assert.equal(server.premiumBasis, "server_estimate");
+  const client = metricsRank([product("OpenAI")], [], {
+    premiumsMatter: true,
+    premiumsEspeciallyNearIpo: false,
+    buyDespiteIpo: false,
+    deadlinesUnimportant: false,
+  });
+  assert.equal(client.premiumBasis, "live");
+  const off = rankResultFromProxy(
+    {
+      ok: true,
+      top3: [{ name: "OpenAI", score: 1 }],
+      pipeline: ["prestocks", "metrics_rank"],
+    },
+    [],
+    { premiumsMatter: false },
+  );
+  assert.equal(off.premiumBasis, "none");
+});
+
 test("Top-3 premium text uses the live helper and Settings disables both data toggles", () => {
   const overview = readFileSync(new URL("../components/OverviewView.tsx", import.meta.url), "utf8");
   const start = overview.indexOf("function premiumText");

@@ -116,9 +116,7 @@ function mapRunToRank(
         }
       : undefined,
     fetchedAt: run.finished_at_utc ?? new Date().toISOString(),
-    premiumBasis: isMetrics
-      ? premiumBasisFor("client", premiumsMatter)
-      : premiumBasisFor("server", premiumsMatter),
+    premiumBasis: premiumBasisFor("server", premiumsMatter),
   };
 }
 
@@ -349,9 +347,7 @@ export function rankResultFromProxy(
     products,
     error: data.error,
     fetchedAt: new Date().toISOString(),
-    premiumBasis: isMetrics
-      ? premiumBasisFor("client", premiumsMatter)
-      : premiumBasisFor("server", premiumsMatter),
+    premiumBasis: premiumBasisFor("server", premiumsMatter),
   };
 }
 
