@@ -22,7 +22,10 @@ import {
   recoverRunCollision,
   tryEnterManualBuy,
 } from "@/lib/manual-buy-guard";
-import { refreshWriteStillCurrent } from "@/lib/predca-refresh";
+import {
+  loadJupPricesInBackground,
+  refreshWriteStillCurrent,
+} from "@/lib/predca-refresh";
 import {
   EMPTY_SNAPSHOT,
   RPC_READ_ERROR_MSG,
@@ -394,31 +397,23 @@ function usePredcaImpl() {
         ownerRef.current?.toBase58() ?? null,
       );
     if (!still()) return;
-    const pricesPromise = (async () => {
-      setPricesLoading(true);
-      try {
-        const next = await fetchJupPrices();
-        if (!still()) return;
-        setJupPrices(next);
-      } catch {
-        /* fetchJupPrices does not throw; a bug here must not touch RPC state */
-      } finally {
-        if (still()) setPricesLoading(false);
-      }
-    })();
+    const pricesPromise = loadJupPricesInBackground(
+      fetchJupPrices,
+      still,
+      setJupPrices,
+      setPricesLoading,
+    );
+    markHandled(pricesPromise);
     reportError(null);
     if (!owner) {
       if (!still()) {
-        await pricesPromise;
         return;
       }
       setSnapshot(EMPTY_SNAPSHOT);
       setRunPriceByIndex(new Map());
-      await pricesPromise;
       return;
     }
     if (!still()) {
-      await pricesPromise;
       return;
     }
     setLoading(true);
@@ -519,7 +514,6 @@ function usePredcaImpl() {
     } finally {
       if (!still()) return;
       setLoading(false);
-      await pricesPromise;
     }
   }, [program, owner, connection, mint]);
 
