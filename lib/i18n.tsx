@@ -221,11 +221,11 @@ const pl: Dict = {
   "settings.kicker": "Konfiguracja DCA",
   "settings.title": "Ustawienia",
   "settings.intro":
-    "Tygodniowa kwota zapisuje się lokalnie od razu. Konto on-chain powstaje przy pierwszej wpłacie na Overview. Potem budżet zmienia „Zapisz budżet on-chain”, Manual Buy albo włączenie auto-zakupu. BYOK zostaje w localStorage.",
+    "Tygodniowa kwota zapisuje się lokalnie od razu (bez portfela — do pierwszego połączenia). Konto on-chain powstaje przy pierwszej wpłacie na Overview. Potem budżet zmienia „Zapisz budżet on-chain”, Manual Buy albo włączenie auto-zakupu. BYOK zostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
   "settings.weeklyInvalid": "Podaj kwotę ≥ 1 USDC, max 2 miejsca po przecinku.",
   "settings.weeklyAtEnable":
-    "Zapis lokalny od razu. Bez konta Predca kwota on-chain powstaje przy wpłacie na Overview.",
+    "Zapis lokalny od razu (bez portfela — do pierwszego połączenia). Bez konta Predca kwota on-chain powstaje przy wpłacie na Overview.",
   "settings.budgetNeedsDeposit":
     "Budżet lokalny jest zapisany. Kwota on-chain pojawi się po wpłacie USDC na Overview.",
   "settings.autoWeekly": "Automatyczny cotygodniowy zakup z vaulta",
@@ -251,7 +251,8 @@ const pl: Dict = {
     "Podłącz portfel. Budżet lokalny zapisuje się od razu; on-chain dopiero po wpłacie na Overview.",
   "settings.saved": "· zapisano ✓",
   "settings.cleared": "· wyczyszczono ✓",
-  "settings.exclusions": "Wykluczenia (np. xAI, OpenAI) — stosowane w rankingu",
+  "settings.exclusions": "Wykluczenia (np. OpenAI, Kalshi) — stosowane w rankingu",
+  "settings.fixedExclusion": "xAI — zawsze wykluczony (niedostępny w PreStocks DCA)",
   "settings.buyDespiteIpo": "Kup PreStock mimo odbytego IPO",
   "settings.deadlineInvalid": "Dopuszczaj tokeny po terminie ważności lub z nieważnym terminem (po dacie końcowej są bezwartościowe).",
   "settings.ipoPremium": "Premia IPO ma znaczenie (uwzględniaj różnicę wyceny tokenu względem rynku, np. −20% / +34%).",
@@ -272,6 +273,7 @@ const pl: Dict = {
   "settings.prefsSignNeedWallet": "Podłącz portfel z signMessage, aby zapisać",
   "settings.prefsSignFailed": "Nie udało się zapisać (podpis lub keeper).",
   "settings.prefsSignOk": "Zapisano u keepersa ✓",
+  "settings.prefsLoading": "Wczytywanie ustawień keepera…",
   "settings.byokTitle": "BYOK — własne klucze API (Bring Your Own)",
   "settings.byokIntro":
     "Klucz demo Jev jest wpisany. Wklej własny, żeby go zastąpić.",
@@ -554,11 +556,11 @@ const en: Dict = {
   "settings.kicker": "DCA configuration",
   "settings.title": "Settings",
   "settings.intro":
-    "The weekly amount saves locally right away. The on-chain account is created with the first deposit on Overview. After that, change the budget with “Save budget on-chain”, Manual Buy, or by enabling auto-buy. BYOK stays in localStorage.",
+    "The weekly amount saves locally right away (without a wallet — until the first connection). The on-chain account is created with the first deposit on Overview. After that, change the budget with “Save budget on-chain”, Manual Buy, or by enabling auto-buy. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
   "settings.weeklyInvalid": "Enter an amount ≥ 1 USDC, at most 2 decimals.",
   "settings.weeklyAtEnable":
-    "Saved locally right away. Until a Predca account exists, the on-chain amount is set by the deposit on Overview.",
+    "Saved locally right away (without a wallet — until the first connection). Until a Predca account exists, the on-chain amount is set by the deposit on Overview.",
   "settings.budgetNeedsDeposit":
     "The local budget is saved. The on-chain amount appears after you deposit USDC on Overview.",
   "settings.autoWeekly": "Automatic weekly purchase from the vault",
@@ -584,7 +586,8 @@ const en: Dict = {
     "Connect a wallet. The local budget saves immediately; the on-chain amount follows a deposit on Overview.",
   "settings.saved": "· saved ✓",
   "settings.cleared": "· cleared ✓",
-  "settings.exclusions": "Exclusions (e.g. xAI, OpenAI) — applied to ranking",
+  "settings.exclusions": "Exclusions (e.g. OpenAI, Kalshi) — applied to ranking",
+  "settings.fixedExclusion": "xAI — always excluded (not available in PreStocks DCA)",
   "settings.buyDespiteIpo": "Buy PreStock even after IPO",
   "settings.deadlineInvalid": "Allow tokens past their expiry or with an invalid deadline (they are worthless after the end date).",
   "settings.ipoPremium": "IPO premium matters (factor in token vs market pricing gap, e.g. −20% / +34%).",
@@ -605,6 +608,7 @@ const en: Dict = {
   "settings.prefsSignNeedWallet": "Connect a wallet with signMessage to save",
   "settings.prefsSignFailed": "Could not save (signature or keeper).",
   "settings.prefsSignOk": "Saved to keeper ✓",
+  "settings.prefsLoading": "Loading keeper settings…",
   "settings.byokTitle": "BYOK — Bring Your Own API Keys",
   "settings.byokIntro":
     "The Jev demo key is filled in. Paste your own to override.",

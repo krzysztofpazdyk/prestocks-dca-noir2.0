@@ -331,6 +331,20 @@ export function readWeeklyBudgetUsd(
   }
 }
 
+/** `null` when this wallet has no scoped amount. Does not fall back to 150. */
+export function readStoredWeeklyBudgetUsd(owner?: string | null): number | null {
+  try {
+    if (typeof localStorage === "undefined" || !hasOwner(owner)) return null;
+    discardLegacyWeeklyBudget();
+    const raw = localStorage.getItem(scopedLsKey(LS_WEEKLY_BUDGET, owner));
+    if (!raw) return null;
+    const n = Number(raw.trim().replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function writeWeeklyBudgetUsd(
   amount: number,
   owner?: string | null,
