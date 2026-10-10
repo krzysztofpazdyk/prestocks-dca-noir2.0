@@ -80,6 +80,17 @@ function makeBaseline(
   };
 }
 
+function budgetTxNotice(
+  message: string | null,
+  tone: "pending" | "error" | "ok",
+) {
+  if (!message) return null;
+  if (tone === "ok") {
+    return <p className="text-[10px] text-[#2dd4bf]">{message}</p>;
+  }
+  return <TxNotice message={message} tone={tone} />;
+}
+
 function baselinesEqual(a: PrefsBaseline | null, b: PrefsBaseline): boolean {
   if (!a) return false;
   return (
@@ -412,17 +423,6 @@ export function SettingsView() {
       {predca.visibleUnresolvedTxs.length > 2 ? (
         <p className="text-[10px] text-[#fbbf24]">+{predca.visibleUnresolvedTxs.length - 2}</p>
       ) : null}
-      {predca.pendingMsg && (
-        <TxNotice message={predca.pendingMsg} tone="pending" />
-      )}
-      {predca.error && (
-        <TxNotice message={predca.error} tone="error" />
-      )}
-      {predca.okMsg && (
-        <p className="rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
-          {predca.okMsg}
-        </p>
-      )}
 
       <label className="block space-y-2 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
         <span className="text-[11px] uppercase tracking-[0.15em] text-[#8b95a8]">
@@ -562,15 +562,9 @@ export function SettingsView() {
             {t("settings.connectForBudget")}
           </p>
         ) : null}
-        {predca.pendingMsg && (
-          <TxNotice message={predca.pendingMsg} tone="pending" />
-        )}
-        {predca.error && (
-          <TxNotice message={predca.error} tone="error" />
-        )}
-        {predca.okMsg && (
-          <p className="text-[10px] text-[#2dd4bf]">{predca.okMsg}</p>
-        )}
+        {budgetTxNotice(predca.pendingMsg, "pending")}
+        {budgetTxNotice(predca.error, "error")}
+        {budgetTxNotice(predca.okMsg, "ok")}
         <div className="border-t border-[#1e2633] pt-4">
           <Toggle
             label={t("settings.autoWeekly")}

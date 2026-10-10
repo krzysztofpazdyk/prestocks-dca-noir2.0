@@ -68,7 +68,6 @@ export function HistoryView() {
         <p className="mt-1 text-xs text-[#8b95a8]">{intro}</p>
       </div>
 
-      {predca.error && <TxNotice message={predca.error} tone="error" />}
       {predca.status === "error" && predca.rpcError ? (
         <TxNotice message={predca.rpcError} tone="error" />
       ) : null}

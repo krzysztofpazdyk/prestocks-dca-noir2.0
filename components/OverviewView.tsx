@@ -38,6 +38,7 @@ import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
 import { depositUi, withdrawUi } from "@/lib/predca-status";
+import { dupOutcomeMessage } from "@/lib/dup-message";
 import {
   FAILED_EXPIRED_MSG,
   UNRESOLVED_MSG,
@@ -179,6 +180,10 @@ export function OverviewView() {
   const dupCheckRef = useRef(false);
   const [dupChecking, setDupChecking] = useState(false);
   const [dupWarn, setDupWarn] = useState<{
+    kind: "deposit" | "withdraw" | "buy";
+    amount: number;
+  } | null>(null);
+  const [dupInfo, setDupInfo] = useState<{
     kind: "deposit" | "withdraw" | "buy";
     amount: number;
   } | null>(null);
@@ -345,6 +350,7 @@ export function OverviewView() {
     amount: number,
     acknowledged: boolean,
   ): Promise<boolean> {
+    setDupInfo(null);
     const rec = predca.unresolvedFor(kind);
     if (!rec) {
       if (dupWarn?.kind === kind) setDupWarn(null);
@@ -364,7 +370,10 @@ export function OverviewView() {
       return false;
     }
     const verdict = await predca.recheckUnresolved(rec.signature);
-    if (verdict === "confirmed") return false;
+    if (dupOutcomeMessage(verdict) === "dup.prevConfirmed") {
+      setDupInfo({ kind, amount });
+      return false;
+    }
     if (verdict === "unresolved") {
       setDupWarn({ kind, amount });
       return false;
@@ -434,6 +443,21 @@ export function OverviewView() {
         >
           {t("dup.sendAnyway")}
         </button>
+      </div>
+    );
+  }
+
+  function dupInfoNotice(kind: "deposit" | "withdraw" | "buy", amount: number) {
+    if (dupInfo?.kind !== kind || dupInfo.amount !== amount) return null;
+    const action =
+      kind === "withdraw"
+        ? t("dup.action.withdraw")
+        : kind === "buy"
+          ? t("dup.action.buy")
+          : t("dup.action.deposit");
+    return (
+      <div className="mt-2 rounded border border-[#fbbf2433] bg-[#fbbf2411] px-3 py-2 text-xs text-[#fbbf24]">
+        <p>{t("dup.prevConfirmed", { action })}</p>
       </div>
     );
   }
@@ -856,6 +880,7 @@ export function OverviewView() {
                   value={depositAmt}
                   onChange={(e) => {
                     if (dupWarn?.kind === "deposit") setDupWarn(null);
+                    if (dupInfo?.kind === "deposit") setDupInfo(null);
                     const n = Number(e.target.value);
                     if (!Number.isFinite(n)) {
                       setDepositAmt(n);
@@ -887,6 +912,7 @@ export function OverviewView() {
                 </p>
               ) : null}
               {dupNotice("deposit", ownerUsdcCap != null ? Math.min(depositAmt, ownerUsdcCap) : depositAmt)}
+              {dupInfoNotice("deposit", ownerUsdcCap != null ? Math.min(depositAmt, ownerUsdcCap) : depositAmt)}
             </div>
           )}
           {showWithdraw && (
@@ -910,6 +936,7 @@ export function OverviewView() {
                   value={withdrawAmt}
                   onChange={(e) => {
                     if (dupWarn?.kind === "withdraw") setDupWarn(null);
+                    if (dupInfo?.kind === "withdraw") setDupInfo(null);
                     const n = Number(e.target.value);
                     if (!Number.isFinite(n)) {
                       setWithdrawAmt(n);
@@ -945,6 +972,10 @@ export function OverviewView() {
                 </p>
               ) : null}
               {dupNotice(
+                "withdraw",
+                vaultUsdcCap != null ? Math.min(withdrawAmt, vaultUsdcCap) : withdrawAmt,
+              )}
+              {dupInfoNotice(
                 "withdraw",
                 vaultUsdcCap != null ? Math.min(withdrawAmt, vaultUsdcCap) : withdrawAmt,
               )}
@@ -1290,6 +1321,7 @@ export function OverviewView() {
               </div>
             ) : null}
             {dupNotice("buy", resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58))}
+            {dupInfoNotice("buy", resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58))}
             {purchaseMsg && (
               <p
                 className={`mt-3 break-all rounded border px-3 py-2 text-xs ${

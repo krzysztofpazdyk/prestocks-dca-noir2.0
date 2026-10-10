@@ -156,6 +156,7 @@ const pl: Dict = {
   "dup.action.deposit": "wpłata",
   "dup.action.withdraw": "wypłata",
   "dup.action.buy": "zakup",
+  "dup.prevConfirmed": "Poprzednia {action} weszła. Kliknij ponownie, aby wysłać nową.",
   "msg.noRecs": "Brak rekomendacji do zakupu.",
   "msg.vaultLowOnChain":
     "Za mało USDC w vault (on-chain): {have} < {need}.",
@@ -487,6 +488,7 @@ const en: Dict = {
   "dup.action.deposit": "deposit",
   "dup.action.withdraw": "withdrawal",
   "dup.action.buy": "purchase",
+  "dup.prevConfirmed": "Your previous {action} went through. Click again to send a new one.",
   "msg.noRecs": "No recommendations to purchase.",
   "msg.vaultLowOnChain":
     "Not enough USDC in vault (on-chain): {have} < {need}.",
