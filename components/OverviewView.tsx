@@ -1138,6 +1138,7 @@ export function OverviewView() {
         pricesReady={pricesReady}
         locale={locale}
         clock={priceClock}
+        now={priceNow}
         onRefresh={() => {
           setPriceNow(Date.now());
           void predca.refreshPrices();
@@ -1387,6 +1388,7 @@ function PricesPanel({
   pricesReady,
   locale,
   clock,
+  now,
   onRefresh,
 }: {
   prices: JupPrices;
@@ -1394,11 +1396,17 @@ function PricesPanel({
   pricesReady: boolean;
   locale: string;
   clock: string;
+  now: number;
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
   const loading = !pricesReady;
   const rows = priceRows(prices.quotes, prices.fetchedAt, prices);
+  const badgeClock = (name: string): string => {
+    const at = prices.carriedAt?.[name];
+    if (at != null && Number.isFinite(at)) return fmtPriceClock(at, now, locale);
+    return clock;
+  };
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -1436,7 +1444,7 @@ function PricesPanel({
                 {rows.map((row) => {
                   const renderBadges = () =>
                     row.flags.map((flag) => (
-                      <Badge key={flag}>{statusLabel(flag, t, clock)}</Badge>
+                      <Badge key={flag}>{statusLabel(flag, t, badgeClock(row.name))}</Badge>
                     ));
                   return (
                     <tr key={row.name} className="border-t border-[#1e2633] align-top">
