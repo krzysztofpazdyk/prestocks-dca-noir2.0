@@ -39,6 +39,8 @@ export type JupPrices = {
   fetchedAt: number;
   source: "live" | "cache";
   suspect: string[];
+  /** Names whose usdPrice was kept from a cache younger than 7 days. */
+  carried: string[];
 };
 
 export type JupStorage = {
@@ -172,6 +174,7 @@ export function emptyJupPrices(now = 0): JupPrices {
     fetchedAt: now,
     source: "live",
     suspect: [],
+    carried: [],
   };
 }
 
@@ -290,7 +293,30 @@ function cachePrices(cached: CachedJup): JupPrices {
     fetchedAt: cached.fetchedAt,
     source: "cache",
     suspect: [],
+    carried: [],
   };
+}
+
+/**
+ * A 200 that omits a mint must not erase a price we already cached (< 7 days).
+ * Carried names are "last read" even when the rest of the response is live.
+ */
+function carryMissingPrices(
+  quotes: Record<string, JupQuote>,
+  cached: CachedJup | null,
+): { quotes: Record<string, JupQuote>; carried: string[] } {
+  if (!cached) return { quotes, carried: [] };
+  const carried: string[] = [];
+  const next = { ...quotes };
+  for (const name of Object.keys(next)) {
+    const fresh = next[name];
+    const prev = cached.quotes[name];
+    if (fresh?.usdPrice == null && prev?.usdPrice != null) {
+      next[name] = prev;
+      carried.push(name);
+    }
+  }
+  return { quotes: next, carried };
 }
 
 async function fetchJupOnce(
@@ -379,6 +405,13 @@ export async function fetchJupPrices(opts?: FetchJupOptions): Promise<JupPrices>
     }
   }
 
-  writeJupPriceCache(quotes, now, storage);
-  return { quotes, fetchedAt: now, source: "live", suspect };
+  const carriedIn = carryMissingPrices(quotes, cached);
+  writeJupPriceCache(carriedIn.quotes, now, storage);
+  return {
+    quotes: carriedIn.quotes,
+    fetchedAt: now,
+    source: "live",
+    suspect,
+    carried: carriedIn.carried,
+  };
 }

@@ -24,6 +24,7 @@ import {
 } from "@/lib/manual-buy-guard";
 import {
   loadJupPricesInBackground,
+  refreshPrices as refreshPricesOnly,
   refreshWriteStillCurrent,
 } from "@/lib/predca-refresh";
 import {
@@ -520,6 +521,26 @@ function usePredcaImpl() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const refreshPrices = useCallback(async () => {
+    const epochAtStart = dataEpoch.current;
+    const ownerAtStart = owner?.toBase58() ?? null;
+    const still = () =>
+      refreshWriteStillCurrent(
+        epochAtStart,
+        ownerAtStart,
+        dataEpoch.current,
+        ownerRef.current?.toBase58() ?? null,
+      );
+    setPricesLoading(true);
+    try {
+      await refreshPricesOnly(fetchJupPrices, still, (value) => {
+        if (still()) setJupPrices(value);
+      });
+    } finally {
+      if (still()) setPricesLoading(false);
+    }
+  }, [owner]);
 
   useEffect(() => {
     if (!ownerKey) return;
@@ -1544,6 +1565,7 @@ function usePredcaImpl() {
     positions,
     jupPrices,
     pricesLoading,
+    refreshPrices,
     runFills,
     weeklyBudgetUsd,
     runs,

@@ -170,7 +170,10 @@ export function buildPositions(
     const priceNow = quote?.usdPrice ?? null;
     const v2Active = pricedUnits > DUST;
     const legacyActive = legacyCost > DUST;
-    const stale = prices.source === "cache" || listed(prices.suspect, bal.name);
+    const stale =
+      prices.source === "cache" ||
+      listed(prices.suspect, bal.name) ||
+      listed(prices.carried ?? [], bal.name);
 
     let valueUsd: number;
     let pnlUsd: number | null;

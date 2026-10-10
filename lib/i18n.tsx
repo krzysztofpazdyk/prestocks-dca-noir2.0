@@ -313,6 +313,7 @@ const pl: Dict = {
   "prices.col.status": "Status",
   "prices.loading": "Ładowanie cen…",
   "prices.lastRead": "ostatni odczyt · {time}",
+  "prices.refresh": "Odśwież ceny",
 
   "pnl.title": "Zysk/strata",
   "pnl.total": "Łącznie",
@@ -624,6 +625,7 @@ const en: Dict = {
   "prices.col.status": "Status",
   "prices.loading": "Loading prices…",
   "prices.lastRead": "last read · {time}",
+  "prices.refresh": "Refresh prices",
 
   "pnl.title": "Profit/loss",
   "pnl.total": "Total",

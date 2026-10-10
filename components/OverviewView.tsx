@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
-import { fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
+import { fmtPriceClock, fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
 import {
   canonicalName,
   isLowLiquidity,
@@ -54,6 +54,9 @@ import { runRankingNow } from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/app-version";
 import type { RankResult } from "@/lib/universe";
+
+/** Page-load clock. Avoids Date.now() during render (react-hooks/purity). */
+const UI_CLOCK_AT = Date.now();
 
 /** Short Top-3 h2 from RankResult.mode — never claim live Jev for metrics. */
 function top3TitleFromRank(result: RankResult, locale: string): string {
@@ -141,6 +144,7 @@ export function OverviewView() {
     kind: "deposit" | "withdraw" | "buy";
     amount: number;
   } | null>(null);
+  const [priceNow, setPriceNow] = useState(UI_CLOCK_AT);
   const sigUnresolved = predca.pendingSignature != null;
 
   useEffect(() => {
@@ -642,15 +646,7 @@ export function OverviewView() {
     (q) => q.usdPrice != null,
   );
   const priceClock = pricesReady
-    ? new Date(predca.jupPrices.fetchedAt).toLocaleTimeString(
-        locale === "en" ? "en-GB" : "pl-PL",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "Europe/Warsaw",
-          hourCycle: "h23",
-        },
-      )
+    ? fmtPriceClock(predca.jupPrices.fetchedAt, priceNow, locale)
     : "";
   const allAtCost =
     predca.positions.length > 0 &&
@@ -1069,6 +1065,10 @@ export function OverviewView() {
         pricesReady={pricesReady}
         locale={locale}
         clock={priceClock}
+        onRefresh={() => {
+          setPriceNow(Date.now());
+          void predca.refreshPrices();
+        }}
       />
 
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
@@ -1274,21 +1274,35 @@ function PricesPanel({
   pricesReady,
   locale,
   clock,
+  onRefresh,
 }: {
   prices: JupPrices;
   pricesLoading: boolean;
   pricesReady: boolean;
   locale: string;
   clock: string;
+  onRefresh: () => void;
 }) {
   const { t } = useI18n();
   const loading = !pricesReady || (pricesLoading && !pricesReady);
   const rows = priceRows(prices.quotes, prices.fetchedAt, prices);
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
-      <h2 className="mb-3 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
-        {t("prices.panelTitle")}
-      </h2>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
+          {t("prices.panelTitle")}
+        </h2>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={pricesLoading}
+          title={t("prices.refresh")}
+          aria-label={t("prices.refresh")}
+          className="rounded border border-[#1e2633] px-2 py-1 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5] disabled:opacity-40"
+        >
+          ↻
+        </button>
+      </div>
       {loading ? (
         <p className="text-xs text-[#8b95a8]">{t("prices.loading")}</p>
       ) : (

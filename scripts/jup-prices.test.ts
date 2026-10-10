@@ -350,6 +350,75 @@ test("price url lists the 8 universe mints and not xAI", () => {
   assert.equal(Object.keys(empty.quotes).length, 8);
 });
 
+test("a partial Jupiter response keeps a cached price and a later failure still has it", async () => {
+  const storage = memStore();
+  const full = await fetchJupPrices({
+    fetchImpl: scripted([{ body: bodyFor(() => liveRow(10)) }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.deepEqual(full.carried, []);
+  assert.equal(full.quotes.OpenAI.usdPrice, 10);
+
+  const partial = scripted([
+    { body: bodyFor((name) => (name === "Anthropic" ? liveRow(11) : undefined)) },
+  ]);
+  const got = await fetchJupPrices({
+    fetchImpl: partial.fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.equal(got.source, "live");
+  assert.equal(got.quotes.Anthropic.usdPrice, 11);
+  assert.equal(got.quotes.OpenAI.usdPrice, 10);
+  assert.ok(got.carried.includes("OpenAI"));
+  assert.equal(got.carried.includes("Anthropic"), false);
+  const saved = JSON.parse(storage.getItem(JUP_CACHE_KEY) ?? "{}") as {
+    quotes: Record<string, { usdPrice: number | null }>;
+  };
+  assert.equal(saved.quotes.OpenAI.usdPrice, 10);
+
+  const down = await fetchJupPrices({
+    fetchImpl: scripted([{ fail: "throw" }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.notEqual(down.quotes.OpenAI.usdPrice, null);
+  assert.equal(down.quotes.OpenAI.usdPrice, 10);
+});
+
+test("a full Jupiter response carries nothing", async () => {
+  const storage = memStore();
+  seed(storage, 8, NOW - 60_000);
+  const got = await fetchJupPrices({
+    fetchImpl: scripted([{ body: bodyFor(() => liveRow(9)) }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.deepEqual(got.carried, []);
+  assert.equal(got.quotes.OpenAI.usdPrice, 9);
+});
+
+test("a cache older than 7 days is not carried into a partial response", async () => {
+  const storage = memStore();
+  seed(storage, 123, NOW - 7 * DAY - 1);
+  const got = await fetchJupPrices({
+    fetchImpl: scripted([
+      { body: bodyFor((name) => (name === "Anthropic" ? liveRow(4) : undefined)) },
+    ]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.equal(got.quotes.OpenAI.usdPrice, null);
+  assert.equal(got.carried.includes("OpenAI"), false);
+  assert.equal(got.quotes.Anthropic.usdPrice, 4);
+});
+
 test("low liquidity keeps the price and flags under $20k", () => {
   const thin = parseJupResponse(
     { [MINTS.Kalshi]: { ...liveRow(4, 5), liquidity: 19_999 } },

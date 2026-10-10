@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fmtSignedPnl, fmtUsdAmount } from "../lib/format-usd";
+import { fmtPriceClock, fmtSignedPnl, fmtUsdAmount } from "../lib/format-usd";
 import type { JupQuote } from "../lib/jup-prices";
 import { priceRows } from "../lib/price-rows";
 import { pnlSummary, runPnl, type PositionRow } from "../lib/position-value";
@@ -227,4 +227,29 @@ test("price row flags cover cache, suspect, low liquidity, and a multiplier chan
   assert.equal(by.Neuralink.premiumPct, null);
   assert.ok(by.Kalshi.flags.includes("no-data"));
   assert.equal(by.Kalshi.usdPrice, null);
+});
+
+test("fmtPriceClock is HH:MM today and a Warsaw date on another day", () => {
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const sameDay = Date.parse("2026-10-10T12:05:00Z");
+  assert.equal(fmtPriceClock(sameDay, now, "pl"), "14:05");
+  assert.equal(fmtPriceClock(sameDay, now, "en"), "14:05");
+  const sixDays = Date.parse("2026-10-04T12:05:00Z");
+  assert.equal(fmtPriceClock(sixDays, now, "pl"), "04.10 14:05");
+  assert.equal(fmtPriceClock(sixDays, now, "en"), "04/10 14:05");
+  const beforeMidnight = Date.parse("2026-10-09T21:30:00Z");
+  const afterMidnightUtc = Date.parse("2026-10-09T23:30:00Z");
+  assert.equal(fmtPriceClock(beforeMidnight, afterMidnightUtc, "pl"), "09.10 23:30");
+  assert.equal(fmtPriceClock(afterMidnightUtc, afterMidnightUtc, "pl"), "01:30");
+});
+
+test("a live row carried from cache is flagged as the last read", () => {
+  const rows = priceRows(
+    { OpenAI: quote("OpenAI", { usdPrice: 20, stockPrice: 16 }) },
+    NOW,
+    { source: "live", suspect: [], carried: ["OpenAI"] },
+  );
+  const openai = rows.find((r) => r.name === "OpenAI");
+  assert.ok(openai?.flags.includes("cache"));
+  assert.equal(rows.find((r) => r.name === "Anduril")?.flags.includes("cache"), false);
 });
