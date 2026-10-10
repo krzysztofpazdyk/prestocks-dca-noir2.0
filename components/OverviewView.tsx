@@ -698,6 +698,7 @@ export function OverviewView() {
   const allAtCost =
     predca.positions.length > 0 &&
     predca.positions.every((row) => row.basis === "cost");
+  const showPnl = connected && predca.positions.length > 0;
 
   const vaultStat =
     predca.status === "error" && predca.vaultUsdc != null
@@ -1116,19 +1117,6 @@ export function OverviewView() {
         </div>
       )}
 
-      <PricesPanel
-        prices={predca.jupPrices}
-        pricesLoading={predca.pricesLoading}
-        pricesReady={pricesReady}
-        locale={locale}
-        clock={priceClock}
-        now={priceNow}
-        onRefresh={() => {
-          setPriceNow(Date.now());
-          void predca.refreshPrices();
-        }}
-      />
-
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
         <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5 lg:h-full">
           <h2 className="mb-4 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
@@ -1349,17 +1337,29 @@ export function OverviewView() {
         </div>
       </div>
 
-      {connected && predca.positions.length > 0 && (
-        <>
-          <PnlSection rows={predca.positions} locale={locale} />
-          <PositionsCard
-            rows={predca.positions}
-            prices={predca.jupPrices}
-            fmt={fmtTile}
-            locale={locale}
-          />
-        </>
+      {showPnl && <PnlSection rows={predca.positions} locale={locale} />}
+
+      {showPnl && (
+        <PositionsCard
+          rows={predca.positions}
+          prices={predca.jupPrices}
+          fmt={fmtTile}
+          locale={locale}
+        />
       )}
+
+      <PricesPanel
+        prices={predca.jupPrices}
+        pricesLoading={predca.pricesLoading}
+        pricesReady={pricesReady}
+        locale={locale}
+        clock={priceClock}
+        now={priceNow}
+        onRefresh={() => {
+          setPriceNow(Date.now());
+          void predca.refreshPrices();
+        }}
+      />
     </div>
   );
 }
