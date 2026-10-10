@@ -297,6 +297,7 @@ const pl: Dict = {
   "history.notReady":
     "Predca nie jest gotowe — wpłać USDC na Overview, potem pojawią się przebiegi.",
   "history.fetchError": "Nie udało się pobrać historii",
+  "history.staleRuns": "Ostatni odczyt — RPC niedostępne, dane mogą być nieaktualne.",
   "history.loading": "Ładowanie historii on-chain…",
   "history.runMeta": "Run #{index} · budżet ~${budget} · slot {slot}",
   "history.buyPrice": "po {price} · {units} szt.",
@@ -629,6 +630,7 @@ const en: Dict = {
   "history.notReady":
     "Predca is not ready — deposit USDC on Overview, then runs will appear.",
   "history.fetchError": "Couldn't load history",
+  "history.staleRuns": "Last read — RPC unavailable, data may be stale.",
   "history.loading": "Loading on-chain history…",
   "history.runMeta": "Run #{index} · budget ~${budget} · slot {slot}",
   "history.buyPrice": "at {price} · {units} units",

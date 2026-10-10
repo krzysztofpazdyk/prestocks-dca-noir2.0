@@ -14,6 +14,7 @@ import {
 } from "@/lib/predca";
 import { fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
 import { runPnl } from "@/lib/position-value";
+import { historyView } from "@/lib/history-view";
 import { useI18n } from "@/lib/i18n";
 
 function mintLabel(mint: RunRecordData["mints"][number]): string {
@@ -34,28 +35,25 @@ export function HistoryView() {
   const { connected } = useWallet();
   const predca = usePredca();
   const { t, locale } = useI18n();
-  const ready = connected && predca.status === "ready";
-  const loading = connected && predca.loading && predca.status === "loading";
-  const hasRuns = ready && predca.runs.length > 0;
+  const mode = historyView(predca.status, predca.runs.length, connected);
+  const showRuns = mode === "list" || mode === "list_stale";
 
   let intro: string;
-  if (!connected) {
+  if (mode === "disconnected") {
     intro = t("history.connectHint");
-  } else if (loading) {
+  } else if (mode === "loading") {
     intro = t("history.loading");
-  } else if (ready && hasRuns) {
+  } else if (showRuns) {
     intro = t("history.onChainIntro", {
       count: predca.runs.length,
       cluster: clusterShortPl(),
     });
-  } else if (ready) {
+  } else if (mode === "empty") {
     intro = t("history.noRuns");
-  } else if (predca.status === "no_config" || predca.status === "no_mint") {
+  } else if (mode === "not_ready") {
     intro = t("history.notReady");
-  } else if (predca.status === "error") {
-    intro = t("history.fetchError");
   } else {
-    intro = t("history.connectHint");
+    intro = t("history.fetchError");
   }
 
   return (
@@ -72,29 +70,35 @@ export function HistoryView() {
         <TxNotice message={predca.rpcError} tone="error" />
       ) : null}
 
-      {!connected && (
+      {mode === "disconnected" && (
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
           {t("history.connectHint")}
         </p>
       )}
 
-      {connected && !ready && !loading && (
+      {mode === "loading" && (
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
-          {predca.status === "loading"
-            ? t("history.loading")
-            : predca.status === "error"
-              ? t("history.fetchError")
-              : t("history.notReady")}
+          {t("history.loading")}
         </p>
       )}
 
-      {ready && !hasRuns && (
+      {(mode === "error" || mode === "not_ready") && (
+        <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
+          {mode === "error" ? t("history.fetchError") : t("history.notReady")}
+        </p>
+      )}
+
+      {mode === "empty" && (
         <p className="rounded border border-dashed border-[#1e2633] px-3 py-6 text-center text-xs text-[#8b95a8]">
           {t("history.noRuns")}
         </p>
       )}
 
-      {hasRuns && (
+      {mode === "list_stale" && (
+        <p className="text-xs text-[#fbbf24]">{t("history.staleRuns")}</p>
+      )}
+
+      {showRuns && (
         <ul className="space-y-3">
           {[...predca.runs].reverse().map((run) => {
             const budget = runBudgetUsd(run);
