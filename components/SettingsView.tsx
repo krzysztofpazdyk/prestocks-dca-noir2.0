@@ -1,8 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
+import {
+  companyDataClientSnapshot,
+  companyDataNeedsRefresh,
+  companyDataServerSnapshot,
+  formatCompanyDate,
+  refreshStaleCompanyData,
+  subscribeCompanyData,
+  toggleAvailability,
+  type CompanyData,
+  type ToggleBucket,
+} from "@/lib/company-data";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { TxNotice } from "@/components/TxNotice";
@@ -36,7 +47,7 @@ import {
   writeWeeklyBudgetUsd,
 } from "@/lib/auto-weekly-buy";
 import { useAutoWeeklyBuy } from "@/lib/hooks/useAutoWeeklyBuy";
-import { LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
+import { dcaApiBase, LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
 
 /** Keeper-synced ranking prefs snapshot for dirty detection. */
 type PrefsBaseline = {
@@ -125,6 +136,20 @@ export function SettingsView() {
     );
     setWeeklyReady(true);
   }, [ownerBase58]);
+
+  const companySnap = useSyncExternalStore(
+    subscribeCompanyData,
+    companyDataClientSnapshot,
+    companyDataServerSnapshot,
+  );
+  const availability = toggleAvailability(companySnap.byName, companySnap.readAt);
+  useEffect(() => {
+    const snap = companyDataClientSnapshot();
+    if (!companyDataNeedsRefresh(snap.byName, snap.readAt)) return;
+    const base = dcaApiBase();
+    if (!base) return;
+    void refreshStaleCompanyData(base);
+  }, []);
 
   // Hydrate ranking toggles from keeper GET /prefs (authoritative for buys).
   // prefsReady stays false until hydrate finishes so we never push stale local
@@ -402,15 +427,23 @@ export function SettingsView() {
       </label>
 
       <div className="space-y-3 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
-        <Toggle
+        <CompanyToggle
           label={t("settings.buyDespiteIpo")}
           checked={buyDespiteIpo}
           onChange={setBuyDespiteIpo}
+          disabled={!availability.buyDespiteIpo.enabled}
+          bucket={availability.buyDespiteIpo}
+          kind="ipo"
+          byName={companySnap.byName}
         />
-        <Toggle
+        <CompanyToggle
           label={t("settings.deadlineInvalid")}
           checked={deadlineInvalid}
           onChange={setDeadlineInvalid}
+          disabled={!availability.deadlinesUnimportant.enabled}
+          bucket={availability.deadlinesUnimportant}
+          kind="deadline"
+          byName={companySnap.byName}
         />
         <Toggle
           label={t("settings.ipoPremium")}
@@ -724,17 +757,20 @@ function Toggle({
   checked,
   onChange,
   disabled = false,
+  title,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={checked}
       disabled={disabled}
+      title={title}
       onClick={() => {
         if (disabled) return;
         onChange(!checked);
@@ -756,5 +792,127 @@ function Toggle({
         />
       </span>
     </button>
+  );
+}
+
+function CompanyFacts({
+  bucket,
+  kind,
+  byName,
+}: {
+  bucket: ToggleBucket;
+  kind: "ipo" | "deadline";
+  byName: Record<string, CompanyData>;
+}) {
+  const { t, locale } = useI18n();
+  const known = bucket.known.map((name, index) => {
+    const data = byName[name];
+    if (!data) return null;
+    let phrase = name;
+    if (kind === "ipo" && data.ipoStatus === "listed" && data.ipoDate != null) {
+      phrase = `${name} — ${t("settings.ipoListed", {
+        date: formatCompanyDate(data.ipoDate, locale, "full"),
+      })}`;
+    } else if (
+      kind === "ipo" &&
+      data.ipoStatus === "announced" &&
+      data.ipoDate != null
+    ) {
+      phrase = `${name} — ${t("settings.ipoAnnounced", {
+        date: formatCompanyDate(data.ipoDate, locale, "full"),
+      })}`;
+    } else if (kind === "deadline" && data.deadline != null) {
+      phrase = `${name} — ${t("settings.deadlineOn", {
+        date: formatCompanyDate(data.deadline, locale, "full"),
+      })}`;
+    }
+    const checked = t("settings.checkedOn", {
+      date: formatCompanyDate(data.checkedAt, locale, "short"),
+    });
+    return (
+      <span key={name}>
+        {index > 0 ? ", " : null}
+        <a
+          href={data.source}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[#a78bfa] underline"
+        >
+          {phrase}
+        </a>
+        {` ${checked}`}
+      </span>
+    );
+  });
+  const knownTemplate = t("settings.dataKnown");
+  const knownAt = knownTemplate.indexOf("{list}");
+  const staleNames = bucket.stale
+    .map((name) => {
+      const data = byName[name];
+      if (!data) return name;
+      const checked = t("settings.checkedOn", {
+        date: formatCompanyDate(data.checkedAt, locale, "short"),
+      });
+      return `${name} (${checked})`;
+    })
+    .join(", ");
+  return (
+    <div className="space-y-1 text-[10px] normal-case leading-relaxed tracking-normal text-[#8b95a8]">
+      {bucket.known.length > 0 ? (
+        <p>
+          {knownAt < 0 ? knownTemplate : knownTemplate.slice(0, knownAt)}
+          {known}
+          {knownAt < 0 ? null : knownTemplate.slice(knownAt + "{list}".length)}
+        </p>
+      ) : null}
+      {bucket.unknown.length > 0 ? (
+        <p>{t("settings.dataUnknown", { names: bucket.unknown.join(", ") })}</p>
+      ) : null}
+      {bucket.stale.length > 0 ? (
+        <p>{t("settings.dataStale", { names: staleNames })}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CompanyToggle({
+  label,
+  checked,
+  onChange,
+  disabled,
+  bucket,
+  kind,
+  byName,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled: boolean;
+  bucket: ToggleBucket;
+  kind: "ipo" | "deadline";
+  byName: Record<string, CompanyData>;
+}) {
+  const { t } = useI18n();
+  const title = disabled ? t("settings.noDataTooltip") : undefined;
+  return (
+    <div className="space-y-1">
+      <Toggle
+        label={label}
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled}
+        title={title}
+      />
+      {disabled ? (
+        <p
+          className="text-[10px] normal-case tracking-normal text-[#8b95a8]"
+          title={title}
+        >
+          {t("settings.noData")}
+        </p>
+      ) : (
+        <CompanyFacts bucket={bucket} kind={kind} byName={byName} />
+      )}
+    </div>
   );
 }

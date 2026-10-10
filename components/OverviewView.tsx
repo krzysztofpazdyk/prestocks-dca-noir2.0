@@ -49,6 +49,7 @@ import {
   rpcHost,
   shortPk,
 } from "@/lib/predca";
+import { livePremiumPct } from "@/lib/premium-view";
 import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
 import { runRankingNow } from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
@@ -130,6 +131,9 @@ export function OverviewView() {
   const [top3, setTop3] = useState<TopPick[]>([]);
   const [top3Title, setTop3Title] = useState<string | null>(null);
   const [top3Subtitle, setTop3Subtitle] = useState<string | null>(null);
+  const [premiumBasis, setPremiumBasis] = useState<RankResult["premiumBasis"] | null>(
+    null,
+  );
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -277,6 +281,7 @@ export function OverviewView() {
       );
       setTop3Title(top3TitleFromRank(result, locale));
       setTop3Subtitle(result.sourceLabel || null);
+      setPremiumBasis(result.premiumBasis);
       const notes: string[] = [];
       if (productsResult.dataSource === "snapshot") {
         notes.push(
@@ -627,18 +632,10 @@ export function OverviewView() {
     })}%`;
   }
 
-  function premiumText(row: TopPick): string {
-    if (
-      row.premiumSource === "jupiter_stockdata" &&
-      row.premiumPct != null &&
-      Number.isFinite(row.premiumPct)
-    ) {
-      return t("premium.label", { pct: fmtPct(row.premiumPct) });
-    }
-    if (row.premiumSource === "hardcoded_fallback" && row.premiumPct != null) {
-      return `${t("premium.estimate")} ${fmtPct(row.premiumPct)}`;
-    }
-    return t("premium.noData");
+  function premiumText(name: string): string {
+    const pct = livePremiumPct(name, predca.jupPrices);
+    if (pct == null) return t("premium.noData");
+    return t("premium.label", { pct: fmtPct(pct) });
   }
 
   const pricesReady = predca.jupPrices.fetchedAt > 0;
@@ -1165,11 +1162,16 @@ export function OverviewView() {
                       {fmtUsdAmount(r.priceNow, locale) ?? t("positions.noData")}
                     </span>
                     {" · "}
-                    {premiumText(r)}
+                    {premiumText(r.name)}
                   </p>
                 </li>
               ))}
             </ol>
+            {premiumBasis ? (
+              <p className="mt-3 text-[10px] normal-case leading-relaxed tracking-normal text-[#8b95a8]">
+                {t(`rank.premiumBasis.${premiumBasis}`)}
+              </p>
+            ) : null}
             {rankError && (
               <p className="mt-3 text-xs text-[#f87171]">{rankError}</p>
             )}

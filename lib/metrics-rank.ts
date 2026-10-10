@@ -6,6 +6,7 @@
  */
 
 import { filterProducts, readExclusions } from "@/lib/exclusions";
+import { premiumBasisFor } from "@/lib/premium-view";
 import type { RankPrefs } from "@/lib/rank-prefs";
 import {
   filterExpired,
@@ -51,7 +52,9 @@ export function metricsRank(
   const scores: RankRow[] = filtered.map((p) => {
     let score = 50;
     if (premiumsMatter) {
-      score -= Number(p.premium_pct);
+      const premium =
+        p.premium_source === "jupiter_stockdata" ? Number(p.premium_pct) : 0;
+      score -= Number.isFinite(premium) ? premium : 0;
       if (p.near_ipo && nearIpoBoost) score += 8;
     }
     score = Math.max(0, Math.min(100, score));
@@ -72,5 +75,6 @@ export function metricsRank(
     products: filtered,
     grok: { skipped: true, reason: "metrics_fallback" },
     fetchedAt: new Date().toISOString(),
+    premiumBasis: premiumBasisFor("client", premiumsMatter),
   };
 }

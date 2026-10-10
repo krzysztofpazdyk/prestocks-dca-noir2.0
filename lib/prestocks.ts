@@ -5,6 +5,11 @@
  */
 
 import {
+  applyCompanyData,
+  companyDataFromProducts,
+  rememberCompanyRecords,
+} from "@/lib/company-data";
+import {
   fetchJupPrices,
   ipoPremiumPct,
   quoteByName,
@@ -15,6 +20,7 @@ import { dcaApiBase, SS_PRODUCTS } from "@/lib/keys";
 import {
   HARDCODED_PREMIUMS_PCT,
   MINTS,
+  NEAR_IPO_NAMES,
   SYMBOL_BY_NAME,
   XAI_MINT,
   type PrestocksProduct,
@@ -107,7 +113,7 @@ function positivePrice(v: unknown): number | null {
   return n;
 }
 
-/** Ranking still needs a number. UI marks `hardcoded_fallback` as an estimate. */
+/** Ranking still stores a number. The UI does not display `hardcoded_fallback`. */
 export function summarizePremiumSource(products: PrestocksProduct[]): string {
   if (products.some((p) => p.premium_source === "jupiter_stockdata")) {
     return "jupiter_stockdata";
@@ -158,8 +164,7 @@ export function buildProducts(
       volume_cum_usd: (m.cumulativeVolumeUSD as number) ?? null,
       txn_count: (m.txnCount as number) ?? null,
       change_30d_pct: (m.thirtyDayChange as number) ?? null,
-      // TODO(v4.33): SpaceX IPO done 2026-06-12
-      near_ipo: name === "SpaceX",
+      near_ipo: NEAR_IPO_NAMES.some((entry) => entry === name),
       ipo_completed: Boolean(
         m.ipo_completed ?? m.ipoCompleted ?? false,
       ),
@@ -310,6 +315,14 @@ function localLiveProxyUrl(): string | null {
   return `${window.location.origin}${base}/api/prestocks/live/`;
 }
 
+/** Cache company facts and apply them before ranking. Request order stays as it is. */
+function finishProducts(products: PrestocksProduct[]): PrestocksProduct[] {
+  const now = Date.now();
+  const incoming = companyDataFromProducts(products, now);
+  const byName = rememberCompanyRecords(incoming, now);
+  return applyCompanyData(products, byName, now);
+}
+
 /** Prefer same-origin live proxy → prestocks.com → DCA API → session → snapshot. */
 export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
   const proxyUrl = localLiveProxyUrl();
@@ -322,9 +335,10 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
         premiumsSource?: string;
       };
       if (data.ok && (data.products?.length ?? 0) >= 3) {
-        writeSession(data.products ?? []);
+        const products = finishProducts(data.products ?? []);
+        writeSession(products);
         return {
-          products: data.products ?? [],
+          products,
           totals: data.totals,
           premiumsSource: data.premiumsSource ?? "live_mark_price_batch",
           dataSource: "live_proxy",
@@ -339,9 +353,10 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
 
   try {
     const live = await loadLivePrestocks();
-    writeSession(live.products);
+    const products = finishProducts(live.products);
+    writeSession(products);
     return {
-      products: live.products,
+      products,
       totals: live.totals,
       premiumsSource: live.premiumsSource,
       dataSource: "live",
@@ -357,9 +372,10 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
     try {
       const proxied = await fetchViaApiProxy();
       if (proxied && proxied.products.length) {
-        writeSession(proxied.products);
+        const products = finishProducts(proxied.products);
+        writeSession(products);
         return {
-          products: proxied.products,
+          products,
           totals: proxied.totals,
           premiumsSource: proxied.premiumsSource,
           dataSource: "api_proxy",
@@ -376,7 +392,7 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
     const sess = readSession();
     if (sess) {
       return {
-        products: sess,
+        products: finishProducts(sess),
         totals: null,
         premiumsSource: "sessionStorage",
         dataSource: "session",
@@ -400,7 +416,7 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
         }
       }
       return {
-        products,
+        products: finishProducts(products),
         totals: snap.totals,
         premiumsSource,
         dataSource: "snapshot",
@@ -409,7 +425,7 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
       };
     } catch {
       return {
-        products: [],
+        products: finishProducts([]),
         totals: null,
         premiumsSource: "none",
         dataSource: "snapshot",

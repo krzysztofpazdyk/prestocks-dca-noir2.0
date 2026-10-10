@@ -5,6 +5,7 @@
  */
 
 import { metricsRank } from "@/lib/metrics-rank";
+import { premiumBasisFor } from "@/lib/premium-view";
 import type { RankPrefs } from "@/lib/rank-prefs";
 import { readRankPrefs } from "@/lib/rank-prefs";
 import type { PrestocksProduct, RankResult, RankRow } from "@/lib/universe";
@@ -40,7 +41,7 @@ function prefsLine(prefs: RankPrefs): string {
     : "deadlines_unimportant=false (exclude expired / invalid-deadline names)";
   const ipoBit = prefs.premiumsMatter
     ? prefs.premiumsEspeciallyNearIpo
-      ? "premiums_matter=true especially near IPO (SpaceX)"
+      ? "premiums_matter=true especially near IPO"
       : "premiums_matter=true but de-emphasize near-IPO premium"
     : "premiums_matter=false (ignore premium/discount vs valuation for ranking)";
   const postIpoBit = prefs.buyDespiteIpo
@@ -58,7 +59,7 @@ function scoringHint(prefs: RankPrefs): string {
     : "Do not pick PreStocks that are past expiry or have an invalid deadline.";
   const premHint = prefs.premiumsMatter
     ? prefs.premiumsEspeciallyNearIpo
-      ? "Weight premiums heavily (discount vs mark is good; rich premium needs strong thesis). Near-IPO (SpaceX) premium dynamics are especially important."
+      ? "Weight premiums heavily (discount vs mark is good; rich premium needs strong thesis). Near-IPO premium dynamics are especially important."
       : "Weight premiums heavily (discount vs mark is good; rich premium needs strong thesis). Do not overweight near-IPO premium dynamics."
     : "Do not treat premium/discount vs mark as a ranking signal (premium_pct is informational only). Near-IPO premium bonus is OFF.";
   const postIpoHint = prefs.buyDespiteIpo
@@ -178,7 +179,7 @@ function buildQuestions(
     : "skip expired / invalid-deadline names";
   const ipoPhrase = prefs.premiumsMatter
     ? prefs.premiumsEspeciallyNearIpo
-      ? "premiums matter especially near IPO/SpaceX"
+      ? "premiums matter especially near IPO"
       : "premiums matter but de-emphasize near-IPO premium"
     : "ignore premium/discount vs valuation for ranking";
   const postIpoPhrase = prefs.buyDespiteIpo
@@ -274,7 +275,7 @@ async function callGrok(
     premiums_matter: rankPrefs.premiumsMatter,
     premiums_especially_near_ipo: rankPrefs.premiumsEspeciallyNearIpo,
     buy_despite_ipo: rankPrefs.buyDespiteIpo,
-    near_ipo_examples: ["SpaceX"],
+    near_ipo_examples: [],
     exclude: rankPrefs.exclusions,
   };
   const rows = products.map((p) => ({
@@ -294,7 +295,7 @@ async function callGrok(
     : "do not pick names past expiry / with invalid deadline";
   const ipoSys = rankPrefs.premiumsMatter
     ? rankPrefs.premiumsEspeciallyNearIpo
-      ? "premiums matter especially near IPO (SpaceX)"
+      ? "premiums matter especially near IPO"
       : "premiums matter but de-emphasize near-IPO premium"
     : "ignore premium/discount vs valuation for ranking";
   const postIpoSys = rankPrefs.buyDespiteIpo
@@ -439,6 +440,7 @@ function jevResultFromAnswers(
     summary?: string;
     model?: string;
   },
+  prefs: Pick<RankPrefs, "premiumsMatter">,
 ): RankResult {
   const scores: RankRow[] = products.map((p) => {
     const qid = `score_${p.symbol.toLowerCase()}`;
@@ -474,6 +476,7 @@ function jevResultFromAnswers(
       summary: grok.summary,
     },
     fetchedAt: new Date().toISOString(),
+    premiumBasis: premiumBasisFor("client", prefs.premiumsMatter),
   };
 }
 
@@ -516,7 +519,7 @@ export async function runByokAiRank(opts: {
       ((jev.data as { answers?: Record<string, Record<string, unknown>> })
         ?.answers ??
         {});
-    return jevResultFromAnswers(products, answers, grok);
+    return jevResultFromAnswers(products, answers, grok, prefs);
   } catch (e) {
     const jevErr = e instanceof Error ? e.message : String(e);
     const fallback = metricsRank(products, prefs.exclusions, prefs);
