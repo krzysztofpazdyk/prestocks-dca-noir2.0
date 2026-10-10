@@ -175,6 +175,18 @@ export async function runRankingNow(
   return fallback;
 }
 
+/** Backup ranking that scored every name the same. Hosted AI is never flat. */
+export function isFlatFallback(rank: RankResult | null | undefined): boolean {
+  if (!rank || rank.mode !== "metrics_fallback") return false;
+  const top = rank.top3 ?? [];
+  if (top.length < 2) return false;
+  const first = top[0]?.score;
+  if (typeof first !== "number" || !Number.isFinite(first)) return false;
+  return top.every(
+    (row) => typeof row.score === "number" && Math.abs(row.score - first) < 1e-9,
+  );
+}
+
 export function activeModeLabel(
   rank: RankResult | null,
   hasByok: boolean,

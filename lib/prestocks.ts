@@ -14,9 +14,10 @@ import {
   ipoPremiumPct,
   quoteByName,
   readJupPriceCache,
+  type JupPrices,
   type JupQuote,
 } from "@/lib/jup-prices";
-import { dcaApiBase, SS_PRODUCTS } from "@/lib/keys";
+import { canUseSameOriginJevProxy, dcaApiBase, SS_PRODUCTS } from "@/lib/keys";
 import {
   HARDCODED_PREMIUMS_PCT,
   MINTS,
@@ -231,7 +232,7 @@ async function fetchJson(url: string, timeoutMs = 8000): Promise<unknown> {
 }
 
 /** Live fetch from prestocks.com metrics + Jupiter Price API v3. Used by /api/prestocks/live. */
-export async function loadLivePrestocks(): Promise<{
+export async function loadLivePrestocks(prices?: Promise<JupPrices>): Promise<{
   products: PrestocksProduct[];
   totals: unknown;
   premiumsSource: string;
@@ -241,7 +242,7 @@ export async function loadLivePrestocks(): Promise<{
       metrics?: Array<Record<string, unknown>>;
       totals?: unknown;
     }>,
-    fetchJupPrices(),
+    prices ?? fetchJupPrices(),
   ]);
   const metrics = metricsPayload.metrics ?? [];
   const products = buildProducts(metrics, jup.quotes, jup.fetchedAt);
@@ -252,7 +253,7 @@ export async function loadLivePrestocks(): Promise<{
   };
 }
 
-async function fetchViaApiProxy(): Promise<{
+async function fetchViaApiProxy(prices?: Promise<JupPrices>): Promise<{
   products: PrestocksProduct[];
   totals: unknown;
   premiumsSource: string;
@@ -267,7 +268,7 @@ async function fetchViaApiProxy(): Promise<{
   const products = (data.products ?? []).filter((p) => p.mint !== XAI_MINT);
   let premiumsSource = data.premiums_source ?? "api_proxy";
   try {
-    const jup = await fetchJupPrices();
+    const jup = await (prices ?? fetchJupPrices());
     const overlaid = applyJupPremiums(products, jup.quotes, jup.fetchedAt);
     if (overlaid.some((p) => p.premium_source === "jupiter_stockdata")) {
       premiumsSource = "jupiter_stockdata";
@@ -315,7 +316,6 @@ function localLiveProxyUrl(): string | null {
   return `${window.location.origin}${base}/api/prestocks/live/`;
 }
 
-/** Cache company facts and apply them before ranking. Request order stays as it is. */
 function finishProducts(products: PrestocksProduct[]): PrestocksProduct[] {
   const now = Date.now();
   const incoming = companyDataFromProducts(products, now);
@@ -323,9 +323,26 @@ function finishProducts(products: PrestocksProduct[]): PrestocksProduct[] {
   return applyCompanyData(products, byName, now);
 }
 
-/** Prefer same-origin live proxy → prestocks.com → DCA API → session → snapshot. */
-export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
-  const proxyUrl = localLiveProxyUrl();
+function skipDirectPrestocks(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host !== "localhost" && host !== "127.0.0.1" && host !== "::1";
+}
+
+/** Same-origin proxy only on localhost. Elsewhere skip prestocks.com and reuse one Jupiter read. */
+export async function fetchPrestocksProducts(
+  prices?: JupPrices,
+): Promise<ProductsFetchResult> {
+  let inflight: Promise<JupPrices> | null = null;
+  const pricesOnce = (): Promise<JupPrices> => {
+    if (!inflight) {
+      inflight =
+        prices && prices.fetchedAt > 0 ? Promise.resolve(prices) : fetchJupPrices();
+    }
+    return inflight;
+  };
+
+  const proxyUrl = canUseSameOriginJevProxy() ? localLiveProxyUrl() : null;
   if (proxyUrl) {
     try {
       const data = (await fetchJson(proxyUrl, 20000)) as {
@@ -347,91 +364,95 @@ export async function fetchPrestocksProducts(): Promise<ProductsFetchResult> {
         };
       }
     } catch {
-      /* fall through to direct prestocks.com */
+      /* fall through */
+    }
+  }
+
+  let directMsg = "pominięto bezpośrednie prestocks.com";
+  let looksCors = false;
+  if (!skipDirectPrestocks()) {
+    try {
+      const live = await loadLivePrestocks(pricesOnce());
+      const products = finishProducts(live.products);
+      writeSession(products);
+      return {
+        products,
+        totals: live.totals,
+        premiumsSource: live.premiumsSource,
+        dataSource: "live",
+        corsError: false,
+        errorPl: null,
+      };
+    } catch (e) {
+      directMsg = e instanceof Error ? e.message : String(e);
+      looksCors =
+        /Failed to fetch|NetworkError|CORS|blocked|Load failed/i.test(directMsg) ||
+        directMsg === "Failed to fetch";
     }
   }
 
   try {
-    const live = await loadLivePrestocks();
-    const products = finishProducts(live.products);
-    writeSession(products);
+    const proxied = await fetchViaApiProxy(pricesOnce());
+    if (proxied && proxied.products.length) {
+      const products = finishProducts(proxied.products);
+      writeSession(products);
+      return {
+        products,
+        totals: proxied.totals,
+        premiumsSource: proxied.premiumsSource,
+        dataSource: "api_proxy",
+        corsError: looksCors,
+        errorPl: looksCors
+          ? "CORS zablokował prestocks.com w przeglądarce — użyto proxy API."
+          : null,
+      };
+    }
+  } catch {
+    /* continue */
+  }
+
+  const sess = readSession();
+  if (sess) {
     return {
-      products,
-      totals: live.totals,
-      premiumsSource: live.premiumsSource,
-      dataSource: "live",
-      corsError: false,
-      errorPl: null,
+      products: finishProducts(sess),
+      totals: null,
+      premiumsSource: "sessionStorage",
+      dataSource: "session",
+      corsError: looksCors,
+      errorPl:
+        "Nie udało się pobrać live PreStocks (CORS/sieć). Pokazuję ostatni udany fetch z tej sesji.",
     };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const looksCors =
-      /Failed to fetch|NetworkError|CORS|blocked|Load failed/i.test(msg) ||
-      msg === "Failed to fetch";
+  }
 
-    try {
-      const proxied = await fetchViaApiProxy();
-      if (proxied && proxied.products.length) {
-        const products = finishProducts(proxied.products);
-        writeSession(products);
-        return {
-          products,
-          totals: proxied.totals,
-          premiumsSource: proxied.premiumsSource,
-          dataSource: "api_proxy",
-          corsError: looksCors,
-          errorPl: looksCors
-            ? "CORS zablokował prestocks.com w przeglądarce — użyto proxy API."
-            : null,
-        };
+  try {
+    const snap = await fetchSnapshot();
+    let products = (snap.products ?? []).filter((p) => p.mint !== XAI_MINT);
+    let premiumsSource = "static_snapshot";
+    const cached = readJupPriceCache();
+    if (cached) {
+      products = applyJupPremiums(products, cached.quotes, cached.fetchedAt, {
+        replaceTokenPrice: true,
+      });
+      if (products.some((p) => p.premium_source === "jupiter_stockdata")) {
+        premiumsSource = "jupiter_stockdata";
       }
-    } catch {
-      /* continue */
     }
-
-    const sess = readSession();
-    if (sess) {
-      return {
-        products: finishProducts(sess),
-        totals: null,
-        premiumsSource: "sessionStorage",
-        dataSource: "session",
-        corsError: looksCors,
-        errorPl:
-          "Nie udało się pobrać live PreStocks (CORS/sieć). Pokazuję ostatni udany fetch z tej sesji.",
-      };
-    }
-
-    try {
-      const snap = await fetchSnapshot();
-      let products = (snap.products ?? []).filter((p) => p.mint !== XAI_MINT);
-      let premiumsSource = "static_snapshot";
-      const cached = readJupPriceCache();
-      if (cached) {
-        products = applyJupPremiums(products, cached.quotes, cached.fetchedAt, {
-          replaceTokenPrice: true,
-        });
-        if (products.some((p) => p.premium_source === "jupiter_stockdata")) {
-          premiumsSource = "jupiter_stockdata";
-        }
-      }
-      return {
-        products: finishProducts(products),
-        totals: snap.totals,
-        premiumsSource,
-        dataSource: "snapshot",
-        corsError: looksCors,
-        errorPl: `Brak live PreStocks. Użyto statycznego snapshota z ${PRESTOCKS_SNAPSHOT_DATE} (nie live).`,
-      };
-    } catch {
-      return {
-        products: finishProducts([]),
-        totals: null,
-        premiumsSource: "none",
-        dataSource: "snapshot",
-        corsError: looksCors,
-        errorPl: `Błąd PreStocks: ${msg}. Brak snapshota.`,
-      };
-    }
+    return {
+      products: finishProducts(products),
+      totals: snap.totals,
+      premiumsSource,
+      dataSource: "snapshot",
+      corsError: looksCors,
+      errorPl: `Brak live PreStocks. Użyto statycznego snapshota z ${PRESTOCKS_SNAPSHOT_DATE} (nie live).`,
+    };
+  } catch {
+    return {
+      products: finishProducts([]),
+      totals: null,
+      premiumsSource: "none",
+      dataSource: "snapshot",
+      corsError: looksCors,
+      errorPl: `Błąd PreStocks: ${directMsg}. Brak snapshota.`,
+    };
   }
 }

@@ -203,11 +203,12 @@ export async function triggerDryRun(
     rememberCompanyRecords(companyDataFromRankMap(companyRaw, Date.now()));
   }
   const byok = !!ts;
+  const grok = (run.pipeline ?? []).includes("grok");
   return mapRunToRank(
     run,
     byok ? "byok_ai" : "metrics_fallback",
     byok
-      ? xai
+      ? grok
         ? "Źródło: PreStocks + AI (BYOK · Grok+Jev)"
         : "Źródło: PreStocks + AI (BYOK · Jev)"
       : "Źródło: /run/dry bez TypeSafe BYOK (nie Jev klienta)",
@@ -332,14 +333,14 @@ export function rankResultFromProxy(
   const pipeline = data.pipeline ?? ["prestocks", "jev"];
   const isMetrics =
     pipeline.includes("metrics_rank") && !pipeline.includes("jev");
-  const xaiPresent = readXaiKey().length > 0;
   const premiumsMatter =
     prefs?.premiumsMatter ?? readRankPrefs().premiumsMatter;
+  const grok = pipeline.includes("grok");
   return {
     mode: isMetrics ? "metrics_fallback" : "byok_ai",
     sourceLabel: isMetrics
       ? "Źródło: metryki (bez AI — Jev niedostępny)"
-      : xaiPresent
+      : grok
         ? "Źródło: PreStocks + AI (BYOK · Grok+Jev)"
         : "Źródło: PreStocks + AI (BYOK · Jev)",
     pipeline,

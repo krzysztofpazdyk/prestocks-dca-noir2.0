@@ -51,7 +51,7 @@ import {
 } from "@/lib/predca";
 import { livePremiumPct } from "@/lib/premium-view";
 import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
-import { runRankingNow } from "@/lib/ranking";
+import { isFlatFallback, runRankingNow } from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/app-version";
 import type { RankResult } from "@/lib/universe";
@@ -61,9 +61,7 @@ const UI_CLOCK_AT = Date.now();
 
 /** Short Top-3 h2 from RankResult.mode — never claim live Jev for metrics. */
 function top3TitleFromRank(result: RankResult, locale: string): string {
-  const grok =
-    /grok/i.test(result.sourceLabel || "") ||
-    (result.pipeline || []).some((p) => /grok/i.test(p));
+  const grok = (result.pipeline || []).includes("grok");
   if (result.mode === "metrics_fallback") {
     return locale === "en" ? "Top-3 · metrics" : "Top-3 · metryki";
   }
@@ -134,6 +132,7 @@ export function OverviewView() {
   const [premiumBasis, setPremiumBasis] = useState<RankResult["premiumBasis"] | null>(
     null,
   );
+  const [rankFlat, setRankFlat] = useState(false);
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -265,7 +264,9 @@ export function OverviewView() {
     setPurchaseMsg(null);
     setRankBusy(true);
     try {
-      const productsResult = await fetchPrestocksProducts();
+      const productsResult = await fetchPrestocksProducts(
+        predca.jupPrices.fetchedAt > 0 ? predca.jupPrices : undefined,
+      );
       const result = await runRankingNow(productsResult);
       if (result.error && (!result.top3 || result.top3.length === 0)) {
         throw new Error(result.error);
@@ -282,11 +283,14 @@ export function OverviewView() {
       setTop3Title(top3TitleFromRank(result, locale));
       setTop3Subtitle(result.sourceLabel || null);
       setPremiumBasis(result.premiumBasis);
+      setRankFlat(isFlatFallback(result));
       const notes: string[] = [];
       if (productsResult.dataSource === "snapshot") {
         notes.push(
           t("prestocks.snapshotDated", { date: PRESTOCKS_SNAPSHOT_DATE }),
         );
+      } else if (productsResult.errorPl) {
+        notes.push(productsResult.errorPl);
       }
       if (result.error) notes.push(result.error);
       if (notes.length) setRankError(notes.join(" "));
@@ -591,6 +595,7 @@ export function OverviewView() {
     sigUnresolved ||
     buyInFlight ||
     top3.length === 0 ||
+    rankFlat ||
     predca.txPending ||
     (onChainReady
       ? vaultTooLow
@@ -605,6 +610,7 @@ export function OverviewView() {
     if (sigUnresolved || buyInFlight) return null;
     if (predca.txPending) return t("purchase.disabled.tx");
     if (predca.status === "error") return t("purchase.disabled.rpcError");
+    if (rankFlat) return t("purchase.disabled.flatRanking");
     if (top3.length === 0) return t("purchase.disabled.noRecs");
     if (connected && !onChainReady) return t("purchase.disabled.notReady");
     if (vaultTooLow) {
@@ -1159,7 +1165,11 @@ export function OverviewView() {
                   <p className="mt-1 text-[10px] text-[#8b95a8]">
                     <span className="mono-num">
                       {t("positions.col.price")}{" "}
-                      {fmtUsdAmount(r.priceNow, locale) ?? t("positions.noData")}
+                      {fmtUsdAmount(
+                        quoteByName(predca.jupPrices.quotes, r.name)?.usdPrice ??
+                          r.priceNow,
+                        locale,
+                      ) ?? t("positions.noData")}
                     </span>
                     {" · "}
                     {premiumText(r.name)}
