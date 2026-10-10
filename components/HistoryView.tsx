@@ -24,6 +24,10 @@ function runBudgetUsd(run: RunRecordData): number {
   return run.amounts.reduce((s, a) => s + rawToDollars(a), 0);
 }
 
+function fmtUnits(n: number): string {
+  return n.toLocaleString("pl-PL", { maximumFractionDigits: 6 });
+}
+
 export function HistoryView() {
   const { connected } = useWallet();
   const predca = usePredca();
@@ -93,6 +97,9 @@ export function HistoryView() {
         <ul className="space-y-3">
           {[...predca.runs].reverse().map((run) => {
             const budget = runBudgetUsd(run);
+            const fill = predca.runFills.find(
+              (row) => row.runIndex === run.runIndex.toString(),
+            );
             return (
               <li
                 key={run.runIndex.toString()}
@@ -116,7 +123,9 @@ export function HistoryView() {
                   </span>
                 </div>
                 <ul className="mt-3 grid gap-1 sm:grid-cols-3">
-                  {run.mints.map((m, i) => (
+                  {run.mints.map((m, i) => {
+                    const slot = fill?.slots?.[i] ?? null;
+                    return (
                     <li
                       key={`${run.runIndex.toString()}-${i}`}
                       className="rounded border border-[#1e2633] bg-[#0c0e12] px-2 py-1.5 text-xs"
@@ -125,8 +134,17 @@ export function HistoryView() {
                       <span className="mono-num ml-2 text-[#8b95a8]">
                         ${formatUsd(rawToDollars(run.amounts[i]))}
                       </span>
+                      {slot ? (
+                        <span className="mono-num mt-0.5 block text-[10px] text-[#8b95a8]">
+                          {t("history.buyPrice", {
+                            price: formatUsd(slot.price),
+                            units: fmtUnits(slot.units),
+                          })}
+                        </span>
+                      ) : null}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </li>
             );

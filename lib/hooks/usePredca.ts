@@ -68,6 +68,15 @@ import {
   unresolvedSignatureBlocksTx,
 } from "@/lib/vault-follow-up";
 import { Transaction, type PublicKey } from "@solana/web3.js";
+import { fetchJupPrices, emptyJupPrices, type JupPrices } from "@/lib/jup-prices";
+import {
+  buildPositions,
+  portfolioValue,
+  runLots,
+  valueWeights,
+  type RunLotSource,
+} from "@/lib/position-value";
+import { fetchRunPrices, type DecodedRunPrice } from "@/lib/run-price";
 import type { Holding } from "@/lib/mock-data";
 import {
   allMockMints,
@@ -97,7 +106,6 @@ import {
   rawToDollars,
   RUN_INDEX_TAKEN_MSG,
   usdcMintOrNull,
-  type MockTokenBalance,
   type RunRecordData,
 } from "@/lib/predca";
 
@@ -116,37 +124,54 @@ function mintHint(): string {
   return usdcMintOrNull()?.toBase58() ?? MOCK_USDC_MINT;
 }
 
-function balancesToHoldings(tokens: MockTokenBalance[]): Holding[] {
-  const nonzero = tokens.filter((t) => t.amount > 0);
-  if (nonzero.length === 0) return [];
-  const total = nonzero.reduce((s, t) => s + t.amount, 0);
-  if (total <= 0) return [];
-
-  const out: Holding[] = nonzero.map((t, i) => ({
-    name: t.name,
-    value: Math.round((t.amount / total) * 1000) / 10,
-    color: holdingColor(t.name, i),
-  }));
-
-  const sum = out.reduce((s, h) => s + h.value, 0);
-  const rem = Math.round((100 - sum) * 10) / 10;
-  if (rem !== 0 && out.length > 0) {
-    let maxIdx = 0;
-    for (let i = 1; i < out.length; i++) {
-      if (out[i].value > out[maxIdx].value) maxIdx = i;
-    }
-    out[maxIdx] = {
-      ...out[maxIdx],
-      value: Math.round((out[maxIdx].value + rem) * 10) / 10,
-    };
+function bnNum(v: BN | number | { toNumber?: () => number }): number {
+  if (typeof v === "number") return v;
+  if (v && typeof v === "object" && typeof v.toNumber === "function") {
+    return v.toNumber();
   }
-  return out;
+  return Number(v);
+}
+
+export type RunFillView = {
+  runIndex: string;
+  /** null when this run has no RunPrice account (legacy 1:1). */
+  slots: Array<{ units: number; price: number } | null> | null;
+};
+
+function runSources(runs: RunRecordData[]): RunLotSource[] {
+  return runs.map((run) => ({
+    runIndex: bnNum(run.runIndex),
+    ts: bnNum(run.ts),
+    mints: run.mints.map((m) => (typeof m === "string" ? m : m.toBase58())),
+    amountsUsd: run.amounts.map((a) => rawToDollars(a)),
+  }));
+}
+
+function fillsFor(
+  runs: RunRecordData[],
+  decoded: ReadonlyMap<number, DecodedRunPrice | null>,
+): RunFillView[] {
+  return runs.map((run) => {
+    const runIndex = bnNum(run.runIndex);
+    const dec = decoded.get(runIndex) ?? null;
+    const mints = run.mints.map((m) => (typeof m === "string" ? m : m.toBase58()));
+    if (!dec) return { runIndex: String(runIndex), slots: null };
+    const slots = mints.map((mint, i) => {
+      const decMint = dec.mints[i]?.toBase58();
+      if (decMint !== mint) return null;
+      const units = Number(dec.units[i]) / 1e6;
+      const price = Number(dec.pricesE6[i]) / 1e6;
+      if (!Number.isFinite(units) || !Number.isFinite(price)) return null;
+      return { units, price };
+    });
+    return { runIndex: String(runIndex), slots };
+  });
 }
 
 function runToLastPurchase(run: RunRecordData): OnChainLastPurchase {
   const amounts = run.amounts.map((a) => rawToDollars(a));
   const amountUsd = amounts.reduce((s, a) => s + a, 0);
-  const tokens = run.mints.map((m, i) => {
+  const tokens = run.mints.map((m) => {
     const named = nameByMint(m);
     if (named) return named;
     const s = typeof m === "string" ? m : m.toBase58();
@@ -311,6 +336,11 @@ function usePredcaImpl() {
     setError(msg);
   }
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [jupPrices, setJupPrices] = useState<JupPrices>(() => emptyJupPrices(0));
+  const [pricesLoading, setPricesLoading] = useState(false);
+  const [runPriceByIndex, setRunPriceByIndex] = useState<
+    Map<number, DecodedRunPrice | null>
+  >(() => new Map());
 
   const provider = useMemo(() => {
     if (!wallet) return null;
@@ -340,6 +370,7 @@ function usePredcaImpl() {
     setOkMsg(null);
     reportError(null);
     setSnapshot(EMPTY_SNAPSHOT);
+    setRunPriceByIndex(new Map());
     unresolvedRef.current = [];
     setUnresolvedTxs([]);
     setSessionChecking(new Set());
@@ -363,13 +394,33 @@ function usePredcaImpl() {
         ownerRef.current?.toBase58() ?? null,
       );
     if (!still()) return;
+    const pricesPromise = (async () => {
+      setPricesLoading(true);
+      try {
+        const next = await fetchJupPrices();
+        if (!still()) return;
+        setJupPrices(next);
+      } catch {
+        /* fetchJupPrices does not throw; a bug here must not touch RPC state */
+      } finally {
+        if (still()) setPricesLoading(false);
+      }
+    })();
     reportError(null);
     if (!owner) {
-      if (!still()) return;
+      if (!still()) {
+        await pricesPromise;
+        return;
+      }
       setSnapshot(EMPTY_SNAPSHOT);
+      setRunPriceByIndex(new Map());
+      await pricesPromise;
       return;
     }
-    if (!still()) return;
+    if (!still()) {
+      await pricesPromise;
+      return;
+    }
     setLoading(true);
     try {
       const solPromise = fetchSolBalance(connection, owner);
@@ -403,6 +454,7 @@ function usePredcaImpl() {
             runs: [],
           }),
         );
+        setRunPriceByIndex(new Map());
         return;
       }
 
@@ -429,6 +481,16 @@ function usePredcaImpl() {
             runs: records,
           }),
         );
+        try {
+          const decoded = await fetchRunPrices(
+            connection,
+            owner,
+            records.map((r) => bnNum(r.runIndex)),
+          );
+          if (still()) setRunPriceByIndex(decoded);
+        } catch {
+          if (still()) setRunPriceByIndex(new Map());
+        }
       } else {
         const [ownerBal, sol, tokens] = await Promise.all([
           ownerBalPromise,
@@ -447,6 +509,7 @@ function usePredcaImpl() {
             runs: [],
           }),
         );
+        setRunPriceByIndex(new Map());
       }
     } catch (e) {
       if (!still()) return;
@@ -456,6 +519,7 @@ function usePredcaImpl() {
     } finally {
       if (!still()) return;
       setLoading(false);
+      await pricesPromise;
     }
   }, [program, owner, connection, mint]);
 
@@ -487,22 +551,39 @@ function usePredcaImpl() {
 
   const lastRun = runs.length > 0 ? runs[runs.length - 1] : null;
 
-  const holdingsOnChain = useMemo(
-    () => balancesToHoldings(tokenBalances),
-    [tokenBalances],
+  const lots = useMemo(
+    () => runLots(runSources(runs), runPriceByIndex),
+    [runs, runPriceByIndex],
   );
 
+  const positions = useMemo(
+    () => buildPositions(lots, tokenBalances, jupPrices),
+    [lots, tokenBalances, jupPrices],
+  );
+
+  const runFills = useMemo(
+    () => fillsFor(runs, runPriceByIndex),
+    [runs, runPriceByIndex],
+  );
+
+  /** Pie weights follow USD value. Legacy 1:1 lots match the old unit weights. */
+  const holdingsOnChain = useMemo((): Holding[] => {
+    return valueWeights(positions).map((h, i) => ({
+      name: h.name,
+      value: h.value,
+      color: holdingColor(h.name, i),
+    }));
+  }, [positions]);
+
   /**
-   * Devnet mock valuation: 1 PreStock token unit (raw/1e6) = $1 USD proxy.
-   * Wartość portfela PreStock = vault USDC + suma wartości akcji (tokeny).
-   * USDC w portfelu (ATA) nie wchodzi — to cash poza DCA.
+   * Vault USDC + marked positions. Legacy tokens stay at cost ($1 per unit),
+   * so with no RunPrice accounts this matches vault + Σ token units.
+   * Wallet USDC is cash outside the DCA and is not included.
    */
   const portfolioUsd = useMemo(() => {
     if (!owner) return null;
-    const vault = vaultUsdc ?? 0;
-    const tokens = tokenBalances.reduce((s, t) => s + t.amount, 0);
-    return vault + tokens;
-  }, [owner, vaultUsdc, tokenBalances]);
+    return portfolioValue(vaultUsdc ?? 0, positions);
+  }, [owner, vaultUsdc, positions]);
 
   const lastPurchaseOnChain = useMemo(
     () => (lastRun ? runToLastPurchase(lastRun) : null),
@@ -1466,6 +1547,10 @@ function usePredcaImpl() {
     tokenBalances,
     holdingsOnChain,
     portfolioUsd,
+    positions,
+    jupPrices,
+    pricesLoading,
+    runFills,
     weeklyBudgetUsd,
     runs,
     lastRun,

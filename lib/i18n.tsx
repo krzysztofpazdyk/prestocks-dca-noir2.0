@@ -283,6 +283,34 @@ const pl: Dict = {
   "history.fetchError": "Nie udało się pobrać historii",
   "history.loading": "Ładowanie historii on-chain…",
   "history.runMeta": "Run #{index} · budżet ~${budget} · slot {slot}",
+  "history.buyPrice": "po ${price} · {units} szt.",
+
+  "positions.title": "Pozycje",
+  "positions.col.asset": "Aktywo",
+  "positions.col.units": "Jednostki",
+  "positions.col.price": "Cena teraz",
+  "positions.col.value": "Wartość",
+  "positions.col.avgBuy": "Śr. cena zakupu",
+  "positions.col.pnl": "Zysk/strata",
+  "positions.noData": "brak danych",
+  "positions.atCost": "po koszcie (zakup 1:1 sprzed v2)",
+  "positions.legacyHint":
+    "Wcześniejsze zakupy na Devnecie mintowały tokeny 1:1 do USDC — wyceniamy je po koszcie.",
+  "positions.mismatch": "Saldo tokenów różni się od historii zakupów.",
+
+  "prices.source": "Ceny: Jupiter (mainnet PreStocks)",
+  "prices.stale": "ceny: ostatni odczyt · {time}",
+  "prices.unavailable": "Ceny chwilowo niedostępne — wartości po koszcie.",
+  "prices.suspect": "niepewna cena",
+  "prices.lowLiquidity": "niska płynność",
+  "prices.multiplier": "zmiana mnożnika tokena",
+
+  "premium.label": "Premia vs rynek: {pct}",
+  "premium.noData": "Premia: brak danych",
+  "premium.estimate": "szacunek",
+
+  "prestocks.snapshotDated":
+    "Brak live PreStocks. Użyto statycznego snapshota z {date} (nie live).",
 };
 
 const en: Dict = {
@@ -551,6 +579,34 @@ const en: Dict = {
   "history.fetchError": "Couldn't load history",
   "history.loading": "Loading on-chain history…",
   "history.runMeta": "Run #{index} · budget ~${budget} · slot {slot}",
+  "history.buyPrice": "at ${price} · {units} units",
+
+  "positions.title": "Positions",
+  "positions.col.asset": "Asset",
+  "positions.col.units": "Units",
+  "positions.col.price": "Price now",
+  "positions.col.value": "Value",
+  "positions.col.avgBuy": "Avg buy price",
+  "positions.col.pnl": "P/L",
+  "positions.noData": "no data",
+  "positions.atCost": "at cost (1:1 buy before v2)",
+  "positions.legacyHint":
+    "Earlier Devnet buys minted tokens 1:1 to USDC — they are valued at cost.",
+  "positions.mismatch": "Token balance differs from purchase history.",
+
+  "prices.source": "Prices: Jupiter (mainnet PreStocks)",
+  "prices.stale": "prices: last read · {time}",
+  "prices.unavailable": "Prices unavailable — values at cost.",
+  "prices.suspect": "uncertain price",
+  "prices.lowLiquidity": "low liquidity",
+  "prices.multiplier": "token multiplier change",
+
+  "premium.label": "Premium vs market: {pct}",
+  "premium.noData": "Premium: no data",
+  "premium.estimate": "estimate",
+
+  "prestocks.snapshotDated":
+    "No live PreStocks. Using static snapshot from {date} (not live).",
 };
 
 const dictionaries: Record<Locale, Dict> = { pl, en };
