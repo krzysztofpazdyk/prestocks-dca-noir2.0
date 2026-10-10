@@ -21,9 +21,13 @@ import {
 import { purchaseDisabledReasonKey } from "@/lib/purchase-reason";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import {
+  adoptWeeklyDraftForOwner,
   budgetsDiffer,
   needsBudgetConfirm,
+  subscribeWeeklyBudget,
   WEEKLY_BUDGET_EPS,
+  weeklyBudgetRevision,
+  weeklyBudgetServerRevision,
 } from "@/lib/weekly-budget";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
@@ -140,6 +144,9 @@ export function OverviewView() {
   useEffect(() => {
     restoreRankSession(rankPrefsKey());
   }, []);
+  useEffect(() => {
+    adoptWeeklyDraftForOwner(ownerBase58);
+  }, [ownerBase58]);
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -230,7 +237,16 @@ export function OverviewView() {
   }
 
 
-  const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
+  // Bump after adoptWeeklyDraftForOwner writes, so this read sees the scoped amount.
+  const weeklyRev = useSyncExternalStore(
+    subscribeWeeklyBudget,
+    weeklyBudgetRevision,
+    weeklyBudgetServerRevision,
+  );
+  const lsWeekly = readWeeklyBudgetUsd(
+    DEFAULT_SETTINGS.weeklyAmountUsd,
+    weeklyRev < 0 ? null : ownerBase58,
+  );
   const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
   const budgetDirty = budgetsDiffer(lsWeekly, predca.weeklyBudgetUsd);
   const onChainReady = predca.status === "ready";
