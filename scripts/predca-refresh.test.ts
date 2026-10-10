@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { refreshWriteStillCurrent } from "../lib/predca-refresh";
+import {
+  loadJupPricesInBackground,
+  refreshWriteStillCurrent,
+} from "../lib/predca-refresh";
 
 const A = "WalletA";
 const B = "WalletB";
@@ -138,4 +141,112 @@ test("recheckUnresolved confirms from signature history without a vault wait", (
   assert.match(body, /requireVaultIncrease:\s*false/);
   assert.doesNotMatch(body, /isPrivy/);
   assert.match(body, /vaultBefore:\s*null/);
+});
+
+test("refresh does not await jupiter", () => {
+  const src = readFileSync(
+    new URL("../lib/hooks/usePredca.ts", import.meta.url),
+    "utf8",
+  );
+  const refreshAt = src.indexOf("const refresh = useCallback");
+  const refreshFn = src.slice(refreshAt, src.indexOf("void refresh()"));
+  assert.equal(refreshFn.includes("await pricesPromise"), false);
+  const marked = refreshFn.indexOf("markHandled(pricesPromise)");
+  const noOwner = refreshFn.indexOf("if (!owner)");
+  assert.ok(marked > 0 && noOwner > marked);
+  const loadingOff = refreshFn.indexOf("setLoading(false)");
+  assert.match(refreshFn.slice(loadingOff - 40, loadingOff), /if \(!still\(\)\) return;/);
+  assert.equal(refreshFn.slice(loadingOff).includes("pricesPromise"), false);
+});
+
+test("a hung jupiter read lets the on-chain refresh finish", async () => {
+  let quote: number | null = null;
+  let pricesLoading = false;
+  const hung = new Promise<number>(() => {});
+  const prices = loadJupPricesInBackground(
+    () => hung,
+    () => true,
+    (value) => {
+      quote = value;
+    },
+    (loading) => {
+      pricesLoading = loading;
+    },
+  );
+  void prices.catch(() => {});
+
+  let loading = true;
+  const onChain = Promise.resolve("vault");
+  const result = await Promise.race([
+    onChain.then((value) => {
+      loading = false;
+      return value;
+    }),
+    prices.then(() => {
+      throw new Error("refresh waited for jupiter");
+    }),
+    new Promise<string>((_, reject) => {
+      setTimeout(() => reject(new Error("refresh did not finish")), 40);
+    }),
+  ]);
+
+  assert.equal(result, "vault");
+  assert.equal(loading, false);
+  assert.equal(quote, null);
+  assert.equal(pricesLoading, true);
+});
+
+test("a late jupiter quote applies, and a wallet change drops it", async () => {
+  let epoch = 1;
+  let owner: string | null = "A";
+  const still = () => refreshWriteStillCurrent(1, "A", epoch, owner);
+  let quote: string | null = null;
+  let pricesLoading = false;
+  let release!: (value: string) => void;
+  const deferred = new Promise<string>((resolve) => {
+    release = resolve;
+  });
+  const prices = loadJupPricesInBackground(
+    () => deferred,
+    still,
+    (value) => {
+      quote = value;
+    },
+    (loading) => {
+      pricesLoading = loading;
+    },
+  );
+  void prices.catch(() => {});
+  assert.equal(quote, null);
+  assert.equal(pricesLoading, true);
+
+  release("1037");
+  await prices;
+  assert.equal(quote, "1037");
+  assert.equal(pricesLoading, false);
+
+  quote = null;
+  epoch = 1;
+  owner = "A";
+  let releaseStale!: (value: string) => void;
+  const staleRead = new Promise<string>((resolve) => {
+    releaseStale = resolve;
+  });
+  const stale = loadJupPricesInBackground(
+    () => staleRead,
+    still,
+    (value) => {
+      quote = value;
+    },
+    (loading) => {
+      pricesLoading = loading;
+    },
+  );
+  void stale.catch(() => {});
+  epoch = 2;
+  owner = "B";
+  releaseStale("999");
+  await stale;
+  assert.equal(quote, null);
+  assert.equal(pricesLoading, true);
 });
