@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
+import { fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
 import {
   canonicalName,
   isLowLiquidity,
   quoteByName,
   type JupPrices,
 } from "@/lib/jup-prices";
-import type { PositionRow } from "@/lib/position-value";
+import { priceRows, type PriceRowFlag } from "@/lib/price-rows";
+import { pnlSummary, type PositionRow } from "@/lib/position-value";
 import {
   DEFAULT_SETTINGS,
   HOLDINGS,
@@ -1061,6 +1063,14 @@ export function OverviewView() {
         </div>
       )}
 
+      <PricesPanel
+        prices={predca.jupPrices}
+        pricesLoading={predca.pricesLoading}
+        pricesReady={pricesReady}
+        locale={locale}
+        clock={priceClock}
+      />
+
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
         <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5 lg:h-full">
           <h2 className="mb-4 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
@@ -1149,7 +1159,7 @@ export function OverviewView() {
                   <p className="mt-1 text-[10px] text-[#8b95a8]">
                     <span className="mono-num">
                       {t("positions.col.price")}{" "}
-                      {r.priceNow != null ? formatUsd(r.priceNow) : t("positions.noData")}
+                      {fmtUsdAmount(r.priceNow, locale) ?? t("positions.noData")}
                     </span>
                     {" · "}
                     {premiumText(r)}
@@ -1232,13 +1242,147 @@ export function OverviewView() {
       </div>
 
       {connected && predca.positions.length > 0 && (
-        <PositionsCard
-          rows={predca.positions}
-          prices={predca.jupPrices}
-          fmt={fmtTile}
-        />
+        <>
+          <PnlSection rows={predca.positions} locale={locale} />
+          <PositionsCard
+            rows={predca.positions}
+            prices={predca.jupPrices}
+            fmt={fmtTile}
+            locale={locale}
+          />
+        </>
       )}
     </div>
+  );
+}
+
+function statusLabel(
+  flag: PriceRowFlag,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  clock: string,
+): string {
+  if (flag === "cache") return t("prices.lastRead", { time: clock });
+  if (flag === "no-data") return t("positions.noData");
+  if (flag === "suspect") return t("prices.suspect");
+  if (flag === "low-liquidity") return t("prices.lowLiquidity");
+  return t("prices.multiplier");
+}
+
+function PricesPanel({
+  prices,
+  pricesLoading,
+  pricesReady,
+  locale,
+  clock,
+}: {
+  prices: JupPrices;
+  pricesLoading: boolean;
+  pricesReady: boolean;
+  locale: string;
+  clock: string;
+}) {
+  const { t } = useI18n();
+  const loading = !pricesReady || (pricesLoading && !pricesReady);
+  const rows = priceRows(prices.quotes, prices.fetchedAt, prices);
+  return (
+    <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
+      <h2 className="mb-3 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
+        {t("prices.panelTitle")}
+      </h2>
+      {loading ? (
+        <p className="text-xs text-[#8b95a8]">{t("prices.loading")}</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+                  <th className="py-1 pr-3 font-medium">{t("prices.col.company")}</th>
+                  <th className="py-1 pr-3 font-medium">{t("prices.col.price")}</th>
+                  <th className="py-1 pr-3 font-medium">{t("prices.col.premium")}</th>
+                  <th className="hidden py-1 font-medium sm:table-cell">
+                    {t("prices.col.status")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const renderBadges = () =>
+                    row.flags.map((flag) => (
+                      <Badge key={flag}>{statusLabel(flag, t, clock)}</Badge>
+                    ));
+                  return (
+                    <tr key={row.name} className="border-t border-[#1e2633] align-top">
+                      <td className="py-2 pr-3 text-[#c5cedb]">
+                        <div>{row.name}</div>
+                        {row.flags.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1 sm:hidden">{renderBadges()}</div>
+                        )}
+                      </td>
+                      <td className="mono-num py-2 pr-3">
+                        {fmtUsdAmount(row.usdPrice, locale) ?? t("positions.noData")}
+                      </td>
+                      <td className="mono-num py-2 pr-3">
+                        {row.premiumPct != null ? fmtPanelPct(row.premiumPct, locale) : t("positions.noData")}
+                      </td>
+                      <td className="hidden py-2 sm:table-cell">
+                        {row.flags.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">{renderBadges()}</div>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-[10px] text-[#8b95a8]">{t("prices.source")}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function fmtPanelPct(value: number, locale: string): string {
+  return `${value.toLocaleString(locale === "en" ? "en-US" : "pl-PL", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    signDisplay: "exceptZero",
+  })}%`;
+}
+
+function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
+  const { t } = useI18n();
+  const summary = pnlSummary(rows);
+  const pnl = summary.pnlUsd;
+  const pos = pnl != null && pnl > 0;
+  const neg = pnl != null && pnl < 0;
+  const pnlClass = pos ? "text-[#34d399]" : neg ? "text-[#f87171]" : "text-[#8b95a8]";
+  const money = summary.hasPriced ? fmtSignedPnl(pnl, summary.pnlPct, locale) : null;
+  const atCost = fmtUsdAmount(summary.legacyCostUsd, locale);
+  return (
+    <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
+      <h2 className="mb-2 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
+        {t("pnl.title")}
+      </h2>
+      {money ? (
+        <p className={`mono-num text-lg ${pnlClass}`}>
+          {t("pnl.total")} {money}
+        </p>
+      ) : (
+        <p className="mono-num text-sm text-[#c5cedb]">
+          {t("pnl.atCostValue", { value: atCost ?? t("positions.noData") })}
+        </p>
+      )}
+      {!summary.hasPriced && (
+        <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.legacyNote")}</p>
+      )}
+      {summary.hasPriced && summary.hasLegacy && (
+        <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.partialNote")}</p>
+      )}
+    </section>
   );
 }
 
@@ -1246,10 +1390,12 @@ function PositionsCard({
   rows,
   prices,
   fmt,
+  locale,
 }: {
   rows: PositionRow[];
   prices: JupPrices;
   fmt: (value: number | null, digits?: number) => string;
+  locale: string;
 }) {
   const { t } = useI18n();
   return (
@@ -1313,20 +1459,22 @@ function PositionsCard({
                     {fmt(row.units, 4)}
                   </td>
                   <td className="mono-num py-2 pr-3">
-                    {row.priceNow != null ? fmt(row.priceNow) : t("positions.noData")}
+                    {fmtUsdAmount(row.priceNow, locale) ?? t("positions.noData")}
                   </td>
                   <td className="mono-num py-2 pr-3 text-[#2dd4bf]">
-                    {fmt(row.valueUsd)}
+                    {fmtUsdAmount(row.valueUsd, locale) ?? t("positions.noData")}
                   </td>
                   <td className="mono-num hidden py-2 pr-3 sm:table-cell">
-                    {row.avgBuyPrice != null ? fmt(row.avgBuyPrice) : "—"}
+                    {fmtUsdAmount(row.avgBuyPrice, locale) ?? "—"}
                   </td>
                   <td className={`mono-num py-2 ${pnlClass}`}>
-                    {row.pnlUsd == null
-                      ? t("positions.noData")
-                      : `${pnlPos ? "+" : ""}${fmt(row.pnlUsd)}${
-                          row.pnlPct == null ? "" : ` (${pnlPos ? "+" : ""}${fmt(row.pnlPct, 1)}%)`
-                        }`}
+                    {row.basis === "cost" ? (
+                      <span title={t("pnl.legacyNote")}>—</span>
+                    ) : row.pnlUsd == null ? (
+                      t("positions.noData")
+                    ) : (
+                      fmtSignedPnl(row.pnlUsd, row.pnlPct, locale)
+                    )}
                   </td>
                 </tr>
               );

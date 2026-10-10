@@ -6,6 +6,7 @@ import {
   checkJump,
   emptyJupPrices,
   fetchJupPrices,
+  STOCK_DATA_MAX_AGE_MS,
   ipoPremiumPct,
   isLowLiquidity,
   jupPriceUrl,
@@ -167,6 +168,22 @@ test("ipo premium is null when stock, age, magnitude, or multiplier disqualifies
   assert.equal(ipoPremiumPct(quote({ usdPrice: 181, stockPrice: 100 }), NOW), null);
   assert.equal(ipoPremiumPct(quote({ usdPrice: 180, stockPrice: 100 }), NOW), 80);
   assert.equal(ipoPremiumPct(quote({ multiplierChange: true }), NOW), null);
+});
+
+test("stockData stays fresh for 72h and drops one second later", () => {
+  assert.equal(STOCK_DATA_MAX_AGE_MS, 259_200_000);
+  const hour = 60 * 60 * 1000;
+  const fresh = ipoPremiumPct(
+    quote({ stockUpdatedAt: NOW - STOCK_DATA_MAX_AGE_MS + 1000 }),
+    NOW,
+  );
+  const stale = ipoPremiumPct(
+    quote({ stockUpdatedAt: NOW - STOCK_DATA_MAX_AGE_MS - 1000 }),
+    NOW,
+  );
+  assert.equal(typeof fresh, "number");
+  assert.equal(stale, null);
+  assert.equal(STOCK_DATA_MAX_AGE_MS, 72 * hour);
 });
 
 test("multiplier change is set for a future or <24h effective time", () => {

@@ -12,7 +12,12 @@ export const JUP_RETRY_MS = 2000;
 export const JUP_TIMEOUT_MS = 8000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const STOCK_MAX_AGE_MS = 72 * 60 * 60 * 1000;
+/**
+ * Maks. wiek stockData (cena referencyjna PreStocks z Jupitera), po którym premia = „brak danych”.
+ * DECYZJA CHRISA (otwarta): 72 h. SpaceX stockData.updatedAt = 2026-10-08 09:20 UTC,
+ * więc premia SpaceX przejdzie na „brak danych” ok. 2026-10-11 11:20 CEST.
+ */
+export const STOCK_DATA_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * DAY_MS;
 const JUMP_PCT = 0.3;
 const CONFIRM_PCT = 0.02;
@@ -174,7 +179,7 @@ export function emptyJupPrices(now = 0): JupPrices {
 export function ipoPremiumPct(q: JupQuote, now: number): number | null {
   if (q.usdPrice == null || q.stockPrice == null) return null;
   if (q.stockUpdatedAt == null) return null;
-  if (now - q.stockUpdatedAt > STOCK_MAX_AGE_MS) return null;
+  if (now - q.stockUpdatedAt > STOCK_DATA_MAX_AGE_MS) return null;
   if (q.multiplierChange) return null;
   const pct = (q.usdPrice / q.stockPrice - 1) * 100;
   if (!Number.isFinite(pct) || Math.abs(pct) > PREMIUM_ABS_MAX) return null;
