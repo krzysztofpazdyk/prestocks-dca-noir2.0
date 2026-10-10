@@ -1,4 +1,4 @@
-> **Pages mirror v4.35:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
+> **Pages mirror v4.36:** This repository is a GitHub Pages deploy mirror of [`prestocks-dca-noir`](https://github.com/krzysztofpazdyk/prestocks-dca-noir) (same app, `basePath` `/prestocks-dca-noir2.0`). Deploy Pages ręcznie, po review — sam PR nie publikuje strony.
 
 # PreStocks UI — Noir
 
