@@ -15,19 +15,10 @@ import { priceRows, type PriceRowFlag } from "@/lib/price-rows";
 import { pnlSummary, positionPnlKind, type PositionRow } from "@/lib/position-value";
 import {
   DEFAULT_SETTINGS,
-  HOLDINGS,
-  LAST_PURCHASE,
-  MOCK_BALANCES,
-  MOCK_VAULT_USDC,
   type Holding,
   type Purchase,
 } from "@/lib/mock-data";
-import {
-  applyPurchase,
-  loadPortfolioState,
-  savePortfolioState,
-  type PortfolioBalances,
-} from "@/lib/portfolio-state";
+import { purchaseDisabledReasonKey } from "@/lib/purchase-reason";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import {
   budgetsDiffer,
@@ -133,31 +124,11 @@ function rankView(result: RankResult, locale: string): RankView {
   };
 }
 
-function emptyPurchase(): Purchase {
-  return {
-    date: "—",
-    amountUsd: 0,
-    tokens: [],
-    perTokenUsd: 0,
-    signature: "",
-  };
-}
-
 export function OverviewView() {
   const { connected, publicKey } = useWallet();
   const ownerBase58 = publicKey?.toBase58() ?? null;
   const predca = usePredca();
   const { locale, t } = useI18n();
-  const [balances, setBalances] = useState<PortfolioBalances>({ ...MOCK_BALANCES });
-  const [vaultUsdc, setVaultUsdc] = useState(MOCK_VAULT_USDC);
-  const [holdings, setHoldings] = useState<Holding[]>(() =>
-    HOLDINGS.map((h) => ({ ...h })),
-  );
-  const [lastPurchase, setLastPurchase] = useState<Purchase>(() => ({
-    ...LAST_PURCHASE,
-    tokens: [...LAST_PURCHASE.tokens],
-  }));
-  const [portfolioRevision, setPortfolioRevision] = useState(0);
   const [depositAmt, setDepositAmt] = useState(500);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
   const [generated, setGenerated] = useState<RankView | null>(null);
@@ -258,17 +229,6 @@ export function OverviewView() {
     }
   }
 
-
-  useEffect(() => {
-    // Offline / disconnected fallback only — localStorage mock portfolio.
-    if (connected) return;
-    const s = loadPortfolioState();
-    setBalances(s.balances);
-    setVaultUsdc(s.vaultUsdc);
-    setHoldings(s.holdings);
-    setLastPurchase(s.lastPurchase);
-    setPortfolioRevision((r) => r + 1);
-  }, [connected]);
 
   const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
   const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
@@ -471,6 +431,7 @@ export function OverviewView() {
   }
 
   async function handlePurchase(acknowledged = false, budgetConfirmed = false) {
+    if (!connected) return;
     const lsAmountNow = readWeeklyBudgetUsd(
       DEFAULT_SETTINGS.weeklyAmountUsd,
       ownerBase58,
@@ -577,51 +538,6 @@ export function OverviewView() {
         }
         return;
       }
-
-      // Offline / disconnected mock path (localStorage).
-      if (
-        availableVaultUsdc == null ||
-        !Number.isFinite(availableVaultUsdc) ||
-        availableVaultUsdc < purchaseAmount
-      ) {
-        setPurchaseMsg(
-          connected
-            ? t("msg.predcaNotReady")
-            : t("msg.vaultLowMock", {
-                have: (availableVaultUsdc ?? 0).toFixed(2),
-                need: purchaseAmount.toFixed(2),
-              }),
-        );
-        return;
-      }
-
-      try {
-        const next = applyPurchase(
-          {
-            balances,
-            vaultUsdc: availableVaultUsdc,
-            holdings,
-            lastPurchase: lastPurchase ?? emptyPurchase(),
-          },
-          { amountUsd: purchaseAmount, tokens: tokenNames },
-        );
-        savePortfolioState(next);
-        setBalances(next.balances);
-        setVaultUsdc(next.vaultUsdc);
-        setHoldings(next.holdings);
-        setLastPurchase(next.lastPurchase);
-        setPortfolioRevision((r) => r + 1);
-        setPurchaseMsg(
-          t("msg.purchaseOffline", {
-            amount: purchaseAmount.toFixed(2),
-            tokens: tokenNames.join(" · "),
-          }),
-        );
-      } catch (error) {
-        setPurchaseMsg(
-          error instanceof Error ? error.message : t("msg.purchaseError"),
-        );
-      }
     } finally {
       leaveManualBuy(buyInFlightRef);
       setBuyInFlight(false);
@@ -696,21 +612,29 @@ export function OverviewView() {
 
   /** Why Purchase stays gray — shown next to the button (vault check kept). */
   const purchaseDisabledReason: string | null = (() => {
-    if (!purchaseDisabled) return null;
-    // The button label already says the buy is in flight. Do not claim vault-low.
-    if (sigUnresolved || buyInFlight) return null;
-    if (predca.txPending) return t("purchase.disabled.tx");
-    if (predca.status === "error") return t("purchase.disabled.rpcError");
-    if (rankFlat) return t("purchase.disabled.flatRanking");
-    if (top3.length === 0) return t("purchase.disabled.noRecs");
-    if (connected && !onChainReady) return t("purchase.disabled.notReady");
-    if (vaultTooLow) {
+    const key = purchaseDisabledReasonKey({
+      purchaseDisabled,
+      sigUnresolved,
+      buyInFlight,
+      txPending: predca.txPending,
+      statusError: predca.status === "error",
+      rankFlat,
+      top3Empty: top3.length === 0,
+      connected,
+      onChainReady,
+      vaultTooLow,
+    });
+    if (key == null) return null;
+    if (key === "purchase.disabled.rpcError") return t("purchase.disabled.rpcError");
+    if (key === "purchase.disabled.flatRanking") return t("purchase.disabled.flatRanking");
+    if (key === "purchase.disabled.noRecs") return t("purchase.disabled.noRecs");
+    if (key === "purchase.disabled.vaultLow") {
       return t("purchase.disabled.vaultLow", {
         have: (availableVaultUsdc ?? 0).toFixed(2),
         need: purchaseAmount.toFixed(2),
       });
     }
-    return t("purchase.disabled.generic");
+    return t(key);
   })();
 
   function fmtTile(value: number | null, digits = 2): string {
@@ -1181,13 +1105,13 @@ export function OverviewView() {
           <h2 className="mb-4 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
             {connected
               ? t("holdings.titleOnChain")
-              : t("holdings.titleOffline")}
+              : t("holdings.titleDisconnected")}
           </h2>
           {displayHoldings.length === 0 ? (
             <p className="text-xs text-[#8b95a8]">
               {connected
                 ? t("holdings.emptyConnected")
-                : t("holdings.empty")}
+                : t("holdings.emptyDisconnected")}
             </p>
           ) : (
             <HoldingsPie holdings={displayHoldings} />
@@ -1343,14 +1267,14 @@ export function OverviewView() {
                 ? t("lastPurchase.titleOnChain")
                 : connected
                   ? t("lastPurchase.titleConnected")
-                  : t("lastPurchase.titleOffline")}
+                  : t("lastPurchase.titleDisconnected")}
             </h2>
-            <div className="flex-1 space-y-1 text-sm pb-5" key={portfolioRevision}>
+            <div className="flex-1 space-y-1 text-sm pb-5">
               {!displayLastPurchase || displayLastPurchase.tokens.length === 0 ? (
                 <p className="text-[#8b95a8]">
                   {connected
                     ? t("lastPurchase.emptyConnected")
-                    : t("lastPurchase.empty")}
+                    : t("lastPurchase.emptyDisconnected")}
                 </p>
               ) : (
                 <>
