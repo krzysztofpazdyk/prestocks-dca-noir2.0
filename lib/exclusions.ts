@@ -3,10 +3,11 @@
  */
 
 import { mintByName } from "@/lib/devnet-mock-mints";
-import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { MINTS, XAI_MINT } from "@/lib/universe";
 
 export const LS_EXCLUSIONS = "prestocks.exclusions";
+/** Product decision: xAI stays out of the universe and out of the typed field. */
+export const FIXED_EXCLUSIONS = ["xAI"] as const;
 
 /** Parse comma-separated exclusion names (trim, drop empties). */
 export function parseExclusions(raw: string): string[] {
@@ -17,7 +18,7 @@ export function parseExclusions(raw: string): string[] {
 }
 
 /**
- * Raw string as stored / typed. Missing key → DEFAULT_SETTINGS default.
+ * Raw string as stored / typed. Missing key → empty field (xAI is not typed).
  */
 export function readExclusionsRaw(): string {
   try {
@@ -28,17 +29,12 @@ export function readExclusionsRaw(): string {
   } catch {
     /* ignore */
   }
-  return DEFAULT_SETTINGS.exclusions.join(", ");
+  return "";
 }
 
-/**
- * Parsed exclusion names for ranking.
- * Empty field → default still `xAI` from DEFAULT_SETTINGS (source of truth when cleared).
- */
+/** Parsed exclusion names for ranking. xAI is always included. */
 export function readExclusions(): string[] {
-  const parsed = parseExclusions(readExclusionsRaw());
-  if (parsed.length === 0) return [...DEFAULT_SETTINGS.exclusions];
-  return parsed;
+  return effectiveExclusions(readExclusionsRaw());
 }
 
 export function writeExclusionsRaw(raw: string): void {
@@ -53,6 +49,38 @@ export function writeExclusionsRaw(raw: string): void {
 
 function normName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function isFixedExclusion(name: string): boolean {
+  const want = normName(name);
+  return FIXED_EXCLUSIONS.some((entry) => normName(entry) === want);
+}
+
+/** Typed names, without the fixed xAI entry and without case-insensitive dupes. */
+export function userExclusions(raw: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const name of parseExclusions(raw)) {
+    if (isFixedExclusion(name)) continue;
+    const key = normName(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name.trim());
+  }
+  return out;
+}
+
+/** Ranking list: fixed xAI first, then the user's names. */
+export function effectiveExclusions(raw: string): string[] {
+  const out: string[] = [...FIXED_EXCLUSIONS];
+  const seen = new Set(out.map((name) => normName(name)));
+  for (const name of userExclusions(raw)) {
+    const key = normName(name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
 }
 
 /** Mints known for an exclusion name (universe + mock registry + xAI mint). */

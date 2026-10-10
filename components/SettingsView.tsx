@@ -24,6 +24,7 @@ import { useI18n } from "@/lib/i18n";
 import {
   parseExclusions,
   readExclusionsRaw,
+  userExclusions,
   writeExclusionsRaw,
 } from "@/lib/exclusions";
 import {
@@ -43,10 +44,17 @@ import {
   type KeeperPrefsPayload,
 } from "@/lib/keeper-client";
 import {
-  readWeeklyBudgetUsd,
+  readStoredWeeklyBudgetUsd,
   writeWeeklyBudgetUsd,
 } from "@/lib/auto-weekly-buy";
-import { budgetsDiffer, parseWeeklyDraft } from "@/lib/weekly-budget";
+import {
+  adoptWeeklyDraft,
+  budgetsDiffer,
+  clearWeeklyDraft,
+  parseWeeklyDraft,
+  readWeeklyDraft,
+  writeWeeklyDraft,
+} from "@/lib/weekly-budget";
 import { useAutoWeeklyBuy } from "@/lib/hooks/useAutoWeeklyBuy";
 import { dcaApiBase, LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
 
@@ -80,6 +88,17 @@ function makeBaseline(
   };
 }
 
+function budgetTxNotice(
+  message: string | null,
+  tone: "pending" | "error" | "ok",
+) {
+  if (!message) return null;
+  if (tone === "ok") {
+    return <p className="text-[10px] text-[#2dd4bf]">{message}</p>;
+  }
+  return <TxNotice message={message} tone={tone} />;
+}
+
 function baselinesEqual(a: PrefsBaseline | null, b: PrefsBaseline): boolean {
   if (!a) return false;
   return (
@@ -102,9 +121,7 @@ export function SettingsView() {
   const [weeklyDraft, setWeeklyDraft] = useState(
     String(DEFAULT_SETTINGS.weeklyAmountUsd),
   );
-  const [exclusions, setExclusions] = useState(
-    DEFAULT_SETTINGS.exclusions.join(", "),
-  );
+  const [exclusions, setExclusions] = useState("");
   const [deadlineInvalid, setDeadlineInvalid] = useState(
     DEFAULT_SETTINGS.deadlineInvalid,
   );
@@ -128,19 +145,39 @@ export function SettingsView() {
   );
   const [prefsSaving, setPrefsSaving] = useState(false);
   const [prefsSaveMsg, setPrefsSaveMsg] = useState<string | null>(null);
+  const [prefsOk, setPrefsOk] = useState(false);
+  const prefsOkTimer = useRef<number | null>(null);
   const prevAutoPhase = useRef(autoBuy.phase);
+  useEffect(() => {
+    return () => {
+      if (prefsOkTimer.current != null) window.clearTimeout(prefsOkTimer.current);
+    };
+  }, []);
 
   // Settings weekly amount is SoT for init-on-deposit (Overview reads same LS key).
   // Hydrate from per-wallet LS; do not keep syncing from on-chain (that stomped LS saves).
   const [weeklyReady, setWeeklyReady] = useState(false);
   const ownerBase58 = publicKey?.toBase58() ?? null;
   useEffect(() => {
-    const amount = readWeeklyBudgetUsd(
-      DEFAULT_SETTINGS.weeklyAmountUsd,
-      ownerBase58,
-    );
-    setWeekly(amount);
-    setWeeklyDraft(String(Math.round(amount * 100) / 100));
+    const draft = readWeeklyDraft();
+    if (!ownerBase58) {
+      const amount = draft ?? DEFAULT_SETTINGS.weeklyAmountUsd;
+      setWeekly(amount);
+      setWeeklyDraft(String(Math.round(amount * 100) / 100));
+      setWeeklyReady(true);
+      return;
+    }
+    const scoped = readStoredWeeklyBudgetUsd(ownerBase58);
+    const adopted = adoptWeeklyDraft(scoped, draft);
+    if (adopted.clearDraft) clearWeeklyDraft();
+    const amount = adopted.value ?? DEFAULT_SETTINGS.weeklyAmountUsd;
+    const parsed = parseWeeklyDraft(String(amount));
+    if (scoped == null && draft != null && parsed.ok) {
+      writeWeeklyBudgetUsd(parsed.value, ownerBase58);
+    }
+    const next = parsed.ok ? parsed.value : amount;
+    setWeekly(next);
+    setWeeklyDraft(String(Math.round(next * 100) / 100));
     setWeeklyReady(true);
   }, [ownerBase58]);
 
@@ -210,12 +247,13 @@ export function SettingsView() {
       }
 
       if (cancelled) return;
-      setExclusions(exclusionsRaw);
+      const shown = userExclusions(exclusionsRaw).join(", ");
+      setExclusions(shown);
       setDeadlineInvalid(deadline);
       setIpoPremium(ipo);
       setBuyDespiteIpo(buyDespite);
       setSyncedBaseline(
-        makeBaseline(exclusionsRaw, deadline, ipo, buyDespite),
+        makeBaseline(shown, deadline, ipo, buyDespite),
       );
       setPrefsReady(true);
     })();
@@ -228,7 +266,7 @@ export function SettingsView() {
   useEffect(() => {
     if (!prefsReady) return;
     const id = window.setTimeout(() => {
-      writeExclusionsRaw(exclusions);
+      writeExclusionsRaw(userExclusions(exclusions).join(", "));
     }, 300);
     return () => window.clearTimeout(id);
   }, [exclusions, prefsReady]);
@@ -274,11 +312,12 @@ export function SettingsView() {
   // `weekly` changes only after parseWeeklyDraft succeeds, so an empty or
   // partial draft never replaces the last valid amount.
   useEffect(() => {
-    if (!weeklyReady || !ownerBase58) return;
+    if (!weeklyReady) return;
     const parsed = parseWeeklyDraft(String(weekly));
     if (!parsed.ok) return;
     const id = window.setTimeout(() => {
-      writeWeeklyBudgetUsd(parsed.value, ownerBase58);
+      if (ownerBase58) writeWeeklyBudgetUsd(parsed.value, ownerBase58);
+      else writeWeeklyDraft(parsed.value);
     }, 300);
     return () => window.clearTimeout(id);
   }, [weekly, weeklyReady, ownerBase58]);
@@ -335,7 +374,9 @@ export function SettingsView() {
     }
     setPrefsSaving(true);
     try {
-      writeExclusionsRaw(exclusions);
+      const shown = userExclusions(exclusions).join(", ");
+      writeExclusionsRaw(shown);
+      if (shown !== exclusions) setExclusions(shown);
       writeDeadlineInvalid(deadlineInvalid);
       writeIpoPremiumMatters(ipoPremium);
       writeBuyDespiteIpo(buyDespiteIpo);
@@ -345,6 +386,8 @@ export function SettingsView() {
         signMessage,
       );
       if (!res.ok) {
+        setPrefsOk(false);
+        if (prefsOkTimer.current != null) window.clearTimeout(prefsOkTimer.current);
         setPrefsSaveMsg(
           res.error
             ? `${t("settings.prefsSignFailed")}: ${res.error}`
@@ -353,10 +396,18 @@ export function SettingsView() {
         return;
       }
       setSyncedBaseline(
-        makeBaseline(exclusions, deadlineInvalid, ipoPremium, buyDespiteIpo),
+        makeBaseline(shown, deadlineInvalid, ipoPremium, buyDespiteIpo),
       );
-      setPrefsSaveMsg(t("settings.prefsSignOk"));
+      setPrefsSaveMsg(null);
+      if (prefsOkTimer.current != null) window.clearTimeout(prefsOkTimer.current);
+      setPrefsOk(true);
+      prefsOkTimer.current = window.setTimeout(() => {
+        prefsOkTimer.current = null;
+        setPrefsOk(false);
+      }, 4000);
     } catch {
+      setPrefsOk(false);
+      if (prefsOkTimer.current != null) window.clearTimeout(prefsOkTimer.current);
       setPrefsSaveMsg(t("settings.prefsSignFailed"));
     } finally {
       setPrefsSaving(false);
@@ -412,29 +463,25 @@ export function SettingsView() {
       {predca.visibleUnresolvedTxs.length > 2 ? (
         <p className="text-[10px] text-[#fbbf24]">+{predca.visibleUnresolvedTxs.length - 2}</p>
       ) : null}
-      {predca.pendingMsg && (
-        <TxNotice message={predca.pendingMsg} tone="pending" />
-      )}
-      {predca.error && (
-        <TxNotice message={predca.error} tone="error" />
-      )}
-      {predca.okMsg && (
-        <p className="rounded border border-[#2dd4bf33] bg-[#2dd4bf11] px-3 py-2 text-xs text-[#2dd4bf]">
-          {predca.okMsg}
-        </p>
-      )}
 
       <label className="block space-y-2 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
         <span className="text-[11px] uppercase tracking-[0.15em] text-[#8b95a8]">
           {t("settings.exclusions")}
         </span>
+        <p className="text-xs text-[#8b95a8]">{t("settings.fixedExclusion")}</p>
         <input
           type="text"
           value={exclusions}
+          disabled={!prefsReady}
+          title={!prefsReady ? t("settings.prefsLoading") : undefined}
           onChange={(e) => setExclusions(e.target.value)}
-          onBlur={() => writeExclusionsRaw(exclusions)}
-          placeholder="xAI, OpenAI"
-          className="w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2 text-sm outline-none focus:border-[#a78bfa66]"
+          onBlur={() => {
+            const shown = userExclusions(exclusions).join(", ");
+            setExclusions(shown);
+            writeExclusionsRaw(shown);
+          }}
+          placeholder="OpenAI, Kalshi"
+          className="w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2 text-sm outline-none focus:border-[#a78bfa66] disabled:opacity-40"
         />
       </label>
 
@@ -444,6 +491,7 @@ export function SettingsView() {
           checked={buyDespiteIpo}
           onChange={setBuyDespiteIpo}
           disabled={!availability.buyDespiteIpo.enabled}
+          prefsReady={prefsReady}
           bucket={availability.buyDespiteIpo}
           kind="ipo"
           byName={companySnap.byName}
@@ -453,6 +501,7 @@ export function SettingsView() {
           checked={deadlineInvalid}
           onChange={setDeadlineInvalid}
           disabled={!availability.deadlinesUnimportant.enabled}
+          prefsReady={prefsReady}
           bucket={availability.deadlinesUnimportant}
           kind="deadline"
           byName={companySnap.byName}
@@ -461,7 +510,12 @@ export function SettingsView() {
           label={t("settings.ipoPremium")}
           checked={ipoPremium}
           onChange={setIpoPremium}
+          disabled={!prefsReady}
+          title={!prefsReady ? t("settings.prefsLoading") : undefined}
         />
+        {prefsOk ? (
+          <p className="text-[10px] text-[#2dd4bf]">{t("settings.prefsSignOk")}</p>
+        ) : null}
         {prefsDirty ? (
           <div className="space-y-2 border-t border-[#fbbf2433] pt-3">
             <p className="text-xs leading-relaxed text-[#fbbf24]">
@@ -488,15 +542,7 @@ export function SettingsView() {
               ) : null}
             </div>
             {prefsSaveMsg ? (
-              <p
-                className={`text-[10px] ${
-                  prefsSaveMsg === t("settings.prefsSignOk")
-                    ? "text-[#2dd4bf]"
-                    : "text-[#fca5a5]"
-                }`}
-              >
-                {prefsSaveMsg}
-              </p>
+              <p className="text-[10px] text-[#fca5a5]">{prefsSaveMsg}</p>
             ) : null}
           </div>
         ) : null}
@@ -520,7 +566,9 @@ export function SettingsView() {
             }}
             onBlur={() => {
               const parsed = parseWeeklyDraft(weeklyDraft);
-              if (parsed.ok && ownerBase58) writeWeeklyBudgetUsd(parsed.value, ownerBase58);
+              if (!parsed.ok) return;
+              if (ownerBase58) writeWeeklyBudgetUsd(parsed.value, ownerBase58);
+              else writeWeeklyDraft(parsed.value);
             }}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
           />
@@ -562,15 +610,9 @@ export function SettingsView() {
             {t("settings.connectForBudget")}
           </p>
         ) : null}
-        {predca.pendingMsg && (
-          <TxNotice message={predca.pendingMsg} tone="pending" />
-        )}
-        {predca.error && (
-          <TxNotice message={predca.error} tone="error" />
-        )}
-        {predca.okMsg && (
-          <p className="text-[10px] text-[#2dd4bf]">{predca.okMsg}</p>
-        )}
+        {budgetTxNotice(predca.pendingMsg, "pending")}
+        {budgetTxNotice(predca.error, "error")}
+        {budgetTxNotice(predca.okMsg, "ok")}
         <div className="border-t border-[#1e2633] pt-4">
           <Toggle
             label={t("settings.autoWeekly")}
@@ -897,6 +939,7 @@ function CompanyToggle({
   checked,
   onChange,
   disabled,
+  prefsReady,
   bucket,
   kind,
   byName,
@@ -905,19 +948,25 @@ function CompanyToggle({
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled: boolean;
+  prefsReady: boolean;
   bucket: ToggleBucket;
   kind: "ipo" | "deadline";
   byName: Record<string, CompanyData>;
 }) {
   const { t } = useI18n();
-  const title = disabled ? t("settings.noDataTooltip") : undefined;
+  const blocked = disabled || !prefsReady;
+  const title = !prefsReady
+    ? t("settings.prefsLoading")
+    : disabled
+      ? t("settings.noDataTooltip")
+      : undefined;
   return (
     <div className="space-y-1">
       <Toggle
         label={label}
         checked={checked}
         onChange={onChange}
-        disabled={disabled}
+        disabled={blocked}
         title={title}
       />
       {disabled ? (

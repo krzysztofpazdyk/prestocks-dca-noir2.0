@@ -49,3 +49,55 @@ export function parseWeeklyDraft(s: string): WeeklyDraft {
   if (value < 1) return { ok: false, reason: "min" };
   return { ok: true, value };
 }
+
+/** Session-only amount typed before a wallet connects. Not the retired global LS key. */
+export const WEEKLY_DRAFT_SESSION_KEY = "predca_weekly_budget_usd.__draft";
+
+export type WeeklyAdoption = {
+  value: number | null;
+  clearDraft: boolean;
+};
+
+/**
+ * First connect: take the draft only when this wallet has no saved amount.
+ * A saved wallet amount wins. No draft leaves the wallet value alone.
+ */
+export function adoptWeeklyDraft(
+  scopedValue: number | null,
+  draft: number | null,
+): WeeklyAdoption {
+  if (draft == null) return { value: scopedValue, clearDraft: false };
+  if (scopedValue == null) return { value: draft, clearDraft: true };
+  return { value: scopedValue, clearDraft: true };
+}
+
+export function readWeeklyDraft(): number | null {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    const raw = sessionStorage.getItem(WEEKLY_DRAFT_SESSION_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 1 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeWeeklyDraft(amount: number): void {
+  try {
+    if (typeof sessionStorage === "undefined") return;
+    if (!Number.isFinite(amount) || amount < 1) return;
+    sessionStorage.setItem(WEEKLY_DRAFT_SESSION_KEY, String(amount));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearWeeklyDraft(): void {
+  try {
+    if (typeof sessionStorage === "undefined") return;
+    sessionStorage.removeItem(WEEKLY_DRAFT_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
