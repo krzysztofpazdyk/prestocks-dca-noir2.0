@@ -21,9 +21,13 @@ import {
 import { purchaseDisabledReasonKey } from "@/lib/purchase-reason";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
 import {
+  adoptWeeklyDraftForOwner,
   budgetsDiffer,
   needsBudgetConfirm,
+  subscribeWeeklyBudget,
   WEEKLY_BUDGET_EPS,
+  weeklyBudgetRevision,
+  weeklyBudgetServerRevision,
 } from "@/lib/weekly-budget";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
@@ -46,7 +50,14 @@ import {
   rpcHost,
   shortPk,
 } from "@/lib/predca";
-import { livePremiumPct } from "@/lib/premium-view";
+import {
+  formatPremiumPct,
+  livePremiumPct,
+  PREMIUM_TONE_CLASS,
+  premiumKind,
+  premiumTone,
+  type PremiumTone,
+} from "@/lib/premium-view";
 import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
 import {
   isFlatFallback,
@@ -140,6 +151,9 @@ export function OverviewView() {
   useEffect(() => {
     restoreRankSession(rankPrefsKey());
   }, []);
+  useEffect(() => {
+    adoptWeeklyDraftForOwner(ownerBase58);
+  }, [ownerBase58]);
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -230,7 +244,16 @@ export function OverviewView() {
   }
 
 
-  const lsWeekly = readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58);
+  // Bump after adoptWeeklyDraftForOwner writes, so this read sees the scoped amount.
+  const weeklyRev = useSyncExternalStore(
+    subscribeWeeklyBudget,
+    weeklyBudgetRevision,
+    weeklyBudgetServerRevision,
+  );
+  const lsWeekly = readWeeklyBudgetUsd(
+    DEFAULT_SETTINGS.weeklyAmountUsd,
+    weeklyRev < 0 ? null : ownerBase58,
+  );
   const purchaseAmount = resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58);
   const budgetDirty = budgetsDiffer(lsWeekly, predca.weeklyBudgetUsd);
   const onChainReady = predca.status === "ready";
@@ -645,18 +668,24 @@ export function OverviewView() {
     });
   }
 
-  function fmtPct(value: number): string {
-    return `${value.toLocaleString(locale === "en" ? "en-US" : "pl-PL", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-      signDisplay: "exceptZero",
-    })}%`;
-  }
-
-  function premiumText(name: string): string {
+  function premiumText(name: string): { text: string; tone: PremiumTone } {
     const pct = livePremiumPct(name, predca.jupPrices);
-    if (pct == null) return t("premium.noData");
-    return t("premium.label", { pct: fmtPct(pct) });
+    const stale =
+      predca.jupPrices.source === "cache" ||
+      predca.jupPrices.carried.some(
+        (rowName) => canonicalName(rowName) === canonicalName(name),
+      );
+    const tone = premiumTone(pct, stale);
+    const kind = premiumKind(pct);
+    if (kind === "none" || pct == null) return { text: t("premium.noData"), tone };
+    const pctText = formatPremiumPct(pct, locale);
+    const key =
+      kind === "above"
+        ? "premium.above"
+        : kind === "below"
+          ? "premium.below"
+          : "premium.atValuation";
+    return { text: t(key, { pct: pctText }), tone };
   }
 
   const pricesReady = predca.jupPrices.fetchedAt > 0;
@@ -669,6 +698,7 @@ export function OverviewView() {
   const allAtCost =
     predca.positions.length > 0 &&
     predca.positions.every((row) => row.basis === "cost");
+  const showPnl = connected && predca.positions.length > 0;
 
   const vaultStat =
     predca.status === "error" && predca.vaultUsdc != null
@@ -1087,19 +1117,6 @@ export function OverviewView() {
         </div>
       )}
 
-      <PricesPanel
-        prices={predca.jupPrices}
-        pricesLoading={predca.pricesLoading}
-        pricesReady={pricesReady}
-        locale={locale}
-        clock={priceClock}
-        now={priceNow}
-        onRefresh={() => {
-          setPriceNow(Date.now());
-          void predca.refreshPrices();
-        }}
-      />
-
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
         <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5 lg:h-full">
           <h2 className="mb-4 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
@@ -1176,7 +1193,9 @@ export function OverviewView() {
                     : t("empty.connectWallet")}
                 </li>
               )}
-              {top3.map((r, i) => (
+              {top3.map((r, i) => {
+                const premium = premiumText(r.name);
+                return (
                 <li
                   key={`${r.name}-${i}`}
                   className="rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2"
@@ -1200,10 +1219,17 @@ export function OverviewView() {
                       ) ?? t("positions.noData")}
                     </span>
                     {" · "}
-                    {premiumText(r.name)}
+                    <span
+                      className={PREMIUM_TONE_CLASS[premium.tone]}
+                      title={t("premium.tooltip")}
+                      aria-label={`${t("premium.label")}: ${premium.text}`}
+                    >
+                      {premium.text}
+                    </span>
                   </p>
                 </li>
-              ))}
+                );
+              })}
             </ol>
             {premiumBasis ? (
               <p className="mt-3 text-[10px] normal-case leading-relaxed tracking-normal text-[#8b95a8]">
@@ -1311,17 +1337,29 @@ export function OverviewView() {
         </div>
       </div>
 
-      {connected && predca.positions.length > 0 && (
-        <>
-          <PnlSection rows={predca.positions} locale={locale} />
-          <PositionsCard
-            rows={predca.positions}
-            prices={predca.jupPrices}
-            fmt={fmtTile}
-            locale={locale}
-          />
-        </>
+      {showPnl && <PnlSection rows={predca.positions} locale={locale} />}
+
+      {showPnl && (
+        <PositionsCard
+          rows={predca.positions}
+          prices={predca.jupPrices}
+          fmt={fmtTile}
+          locale={locale}
+        />
       )}
+
+      <PricesPanel
+        prices={predca.jupPrices}
+        pricesLoading={predca.pricesLoading}
+        pricesReady={pricesReady}
+        locale={locale}
+        clock={priceClock}
+        now={priceNow}
+        onRefresh={() => {
+          setPriceNow(Date.now());
+          void predca.refreshPrices();
+        }}
+      />
     </div>
   );
 }
@@ -1390,7 +1428,9 @@ function PricesPanel({
                 <tr className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
                   <th className="py-1 pr-3 font-medium">{t("prices.col.company")}</th>
                   <th className="py-1 pr-3 font-medium">{t("prices.col.price")}</th>
-                  <th className="py-1 pr-3 font-medium">{t("prices.col.premium")}</th>
+                  <th className="py-1 pr-3 font-medium" title={t("premium.tooltip")}>
+                    {t("prices.col.premium")}
+                  </th>
                   <th className="hidden py-1 font-medium sm:table-cell">
                     {t("prices.col.status")}
                   </th>
@@ -1402,6 +1442,20 @@ function PricesPanel({
                     row.flags.map((flag) => (
                       <Badge key={flag}>{statusLabel(flag, t, badgeClock(row.name))}</Badge>
                     ));
+                  const stale = row.flags.includes("cache");
+                  const kind = premiumKind(row.premiumPct);
+                  const tone = premiumTone(row.premiumPct, stale);
+                  const phrase =
+                    row.premiumPct == null || kind === "none"
+                      ? t("positions.noData")
+                      : t(
+                          kind === "above"
+                            ? "premium.above"
+                            : kind === "below"
+                              ? "premium.below"
+                              : "premium.atValuation",
+                          { pct: fmtPanelPct(row.premiumPct, locale) },
+                        );
                   return (
                     <tr key={row.name} className="border-t border-[#1e2633] align-top">
                       <td className="py-2 pr-3 text-[#c5cedb]">
@@ -1413,8 +1467,11 @@ function PricesPanel({
                       <td className="mono-num py-2 pr-3">
                         {fmtUsdAmount(row.usdPrice, locale) ?? t("positions.noData")}
                       </td>
-                      <td className="mono-num py-2 pr-3">
-                        {row.premiumPct != null ? fmtPanelPct(row.premiumPct, locale) : t("positions.noData")}
+                      <td
+                        className={`mono-num py-2 pr-3 ${PREMIUM_TONE_CLASS[tone]}`}
+                        title={t("premium.tooltip")}
+                      >
+                        {phrase}
                       </td>
                       <td className="hidden py-2 sm:table-cell">
                         {row.flags.length > 0 ? (
@@ -1437,11 +1494,7 @@ function PricesPanel({
 }
 
 function fmtPanelPct(value: number, locale: string): string {
-  return `${value.toLocaleString(locale === "en" ? "en-US" : "pl-PL", {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-    signDisplay: "exceptZero",
-  })}%`;
+  return formatPremiumPct(value, locale);
 }
 
 function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {

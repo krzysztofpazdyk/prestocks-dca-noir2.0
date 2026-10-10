@@ -1,5 +1,34 @@
+import {
+  readStoredWeeklyBudgetUsd,
+  writeWeeklyBudgetUsd,
+} from "@/lib/auto-weekly-buy";
+
 /** Same epsilon Overview and Settings used for on-chain vs local weekly budget. */
 export const WEEKLY_BUDGET_EPS = 0.000001;
+
+let weeklyBudgetRev = 0;
+const weeklyBudgetListeners = new Set<() => void>();
+
+function bumpWeeklyBudget(): void {
+  weeklyBudgetRev += 1;
+  for (const listener of weeklyBudgetListeners) listener();
+}
+
+/** Overview re-reads the scoped amount after a draft is adopted. */
+export function subscribeWeeklyBudget(listener: () => void): () => void {
+  weeklyBudgetListeners.add(listener);
+  return () => {
+    weeklyBudgetListeners.delete(listener);
+  };
+}
+
+export function weeklyBudgetRevision(): number {
+  return weeklyBudgetRev;
+}
+
+export function weeklyBudgetServerRevision(): number {
+  return 0;
+}
 
 /** True when the local weekly amount should be pushed on-chain before a buy. */
 export function budgetsDiffer(ls: number, onChain: number | null): boolean {
@@ -100,4 +129,27 @@ export function clearWeeklyDraft(): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * Adopt a pre-connect draft for this wallet. Returns the written amount, or
+ * null when nothing was stored (no owner, wallet already had an amount, or
+ * no valid draft). A second call does not write again.
+ */
+export function adoptWeeklyDraftForOwner(owner: string | null): number | null {
+  if (!owner) return null;
+  const scoped = readStoredWeeklyBudgetUsd(owner);
+  const draft = readWeeklyDraft();
+  const adopted = adoptWeeklyDraft(scoped, draft);
+  let written: number | null = null;
+  if (scoped == null && draft != null) {
+    const parsed = parseWeeklyDraft(String(draft));
+    if (parsed.ok) {
+      writeWeeklyBudgetUsd(parsed.value, owner);
+      written = parsed.value;
+    }
+  }
+  if (adopted.clearDraft) clearWeeklyDraft();
+  if (written != null || adopted.clearDraft) bumpWeeklyBudget();
+  return written;
 }

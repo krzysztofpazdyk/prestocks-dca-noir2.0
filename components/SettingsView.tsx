@@ -49,8 +49,8 @@ import {
 } from "@/lib/auto-weekly-buy";
 import {
   adoptWeeklyDraft,
+  adoptWeeklyDraftForOwner,
   budgetsDiffer,
-  clearWeeklyDraft,
   parseWeeklyDraft,
   readWeeklyDraft,
   writeWeeklyDraft,
@@ -169,12 +169,9 @@ export function SettingsView() {
     }
     const scoped = readStoredWeeklyBudgetUsd(ownerBase58);
     const adopted = adoptWeeklyDraft(scoped, draft);
-    if (adopted.clearDraft) clearWeeklyDraft();
-    const amount = adopted.value ?? DEFAULT_SETTINGS.weeklyAmountUsd;
+    const written = adoptWeeklyDraftForOwner(ownerBase58);
+    const amount = written ?? adopted.value ?? DEFAULT_SETTINGS.weeklyAmountUsd;
     const parsed = parseWeeklyDraft(String(amount));
-    if (scoped == null && draft != null && parsed.ok) {
-      writeWeeklyBudgetUsd(parsed.value, ownerBase58);
-    }
     const next = parsed.ok ? parsed.value : amount;
     setWeekly(next);
     setWeeklyDraft(String(Math.round(next * 100) / 100));
