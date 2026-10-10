@@ -4,8 +4,13 @@
  * spend server TYPESAFE. Optional XAI BYOK enables Grok.
  */
 
+import {
+  companyDataFromRankMap,
+  rememberCompanyRecords,
+} from "@/lib/company-data";
 import { dcaApiBase, readTypesafeKey, readXaiKey } from "@/lib/keys";
 import { metricsRank } from "@/lib/metrics-rank";
+import { premiumBasisFor } from "@/lib/premium-view";
 import {
   filterProducts,
   filterTop3,
@@ -14,7 +19,12 @@ import {
   readRankPrefs,
   type RankPrefs,
 } from "@/lib/rank-prefs";
-import type { PrestocksProduct, RankResult, RankRow } from "@/lib/universe";
+import {
+  NEAR_IPO_NAMES,
+  type PrestocksProduct,
+  type RankResult,
+  type RankRow,
+} from "@/lib/universe";
 
 export type LatestRunJson = {
   pipeline?: string[];
@@ -28,6 +38,7 @@ export type LatestRunJson = {
   finished_at_utc?: string;
   mode?: string;
   error?: string;
+  company_data?: Record<string, unknown>;
 };
 
 const API_TIMEOUT_MS = 8000;
@@ -86,6 +97,7 @@ function mapRunToRank(
   const pipeline = run.pipeline ?? ["prestocks", "jev"];
   const isMetrics =
     pipeline.includes("metrics_rank") && !pipeline.includes("jev");
+  const premiumsMatter = readRankPrefs().premiumsMatter;
   return {
     mode: isMetrics ? "metrics_fallback" : mode,
     sourceLabel: isMetrics
@@ -104,6 +116,7 @@ function mapRunToRank(
         }
       : undefined,
     fetchedAt: run.finished_at_utc ?? new Date().toISOString(),
+    premiumBasis: premiumBasisFor("server", premiumsMatter),
   };
 }
 
@@ -181,12 +194,19 @@ export async function triggerDryRun(
     throw new Error(errMsg || `API /run/dry HTTP ${resp.status}`);
   }
   const run = data.run ?? (data as LatestRunJson);
+  const companyRaw =
+    run.company_data ??
+    (data as { company_data?: Record<string, unknown> }).company_data;
+  if (companyRaw) {
+    rememberCompanyRecords(companyDataFromRankMap(companyRaw, Date.now()));
+  }
   const byok = !!ts;
+  const grok = (run.pipeline ?? []).includes("grok");
   return mapRunToRank(
     run,
     byok ? "byok_ai" : "metrics_fallback",
     byok
-      ? xai
+      ? grok
         ? "Źródło: PreStocks + AI (BYOK · Grok+Jev)"
         : "Źródło: PreStocks + AI (BYOK · Jev)"
       : "Źródło: /run/dry bez TypeSafe BYOK (nie Jev klienta)",
@@ -220,6 +240,7 @@ export type RankProxyResponse = {
   top3: Array<{ name: string; score: number }>;
   pipeline?: string[];
   error?: string;
+  company_data?: Record<string, unknown>;
 };
 
 /**
@@ -272,6 +293,9 @@ export async function postRank(
   }
   const excl = (prefs ?? readRankPrefs()).exclusions;
   data.top3 = filterTop3(data.top3 ?? [], excl);
+  if (data.company_data) {
+    rememberCompanyRecords(companyDataFromRankMap(data.company_data, Date.now()));
+  }
   return data;
 }
 
@@ -279,10 +303,12 @@ export async function postRank(
 export function rankResultFromProxy(
   data: RankProxyResponse,
   products: PrestocksProduct[],
+  prefs?: Pick<RankPrefs, "premiumsMatter">,
 ): RankResult {
   const byName = new Map(products.map((p) => [p.name.toLowerCase(), p]));
   const rows: RankRow[] = (data.top3 ?? []).map((r) => {
     const p = byName.get(r.name.toLowerCase());
+    const folded = r.name.replace(/\s+/g, "").toLowerCase();
     const base: PrestocksProduct = p ?? {
       name: r.name,
       symbol: r.name.replace(/\s+/g, "").toUpperCase(),
@@ -291,7 +317,9 @@ export function rankResultFromProxy(
       mark_price_usd: null,
       premium_pct: 0,
       premium_source: "proxy",
-      near_ipo: r.name.replace(/\s+/g, "").toLowerCase() === "spacex",
+      near_ipo: NEAR_IPO_NAMES.some(
+        (entry) => entry.replace(/\s+/g, "").toLowerCase() === folded,
+      ),
     };
     return {
       ...base,
@@ -303,12 +331,14 @@ export function rankResultFromProxy(
   const pipeline = data.pipeline ?? ["prestocks", "jev"];
   const isMetrics =
     pipeline.includes("metrics_rank") && !pipeline.includes("jev");
-  const xaiPresent = readXaiKey().length > 0;
+  const premiumsMatter =
+    prefs?.premiumsMatter ?? readRankPrefs().premiumsMatter;
+  const grok = pipeline.includes("grok");
   return {
     mode: isMetrics ? "metrics_fallback" : "byok_ai",
     sourceLabel: isMetrics
       ? "Źródło: metryki (bez AI — Jev niedostępny)"
-      : xaiPresent
+      : grok
         ? "Źródło: PreStocks + AI (BYOK · Grok+Jev)"
         : "Źródło: PreStocks + AI (BYOK · Jev)",
     pipeline,
@@ -317,6 +347,7 @@ export function rankResultFromProxy(
     products,
     error: data.error,
     fetchedAt: new Date().toISOString(),
+    premiumBasis: premiumBasisFor("server", premiumsMatter),
   };
 }
 

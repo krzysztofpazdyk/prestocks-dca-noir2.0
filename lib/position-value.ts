@@ -57,7 +57,7 @@ export type PositionRow = {
   mismatch: boolean;
 };
 
-const DUST = 0.000001;
+export const DUST = 0.000001;
 
 function relDiff(a: number, b: number): boolean {
   const scale = Math.max(Math.abs(a), Math.abs(b), 1);
@@ -170,7 +170,10 @@ export function buildPositions(
     const priceNow = quote?.usdPrice ?? null;
     const v2Active = pricedUnits > DUST;
     const legacyActive = legacyCost > DUST;
-    const stale = prices.source === "cache" || listed(prices.suspect, bal.name);
+    const stale =
+      prices.source === "cache" ||
+      listed(prices.suspect, bal.name) ||
+      listed(prices.carried ?? [], bal.name);
 
     let valueUsd: number;
     let pnlUsd: number | null;
@@ -221,6 +224,10 @@ export type PnlSummary = {
   legacyCostUsd: number;
   hasLegacy: boolean;
   hasPriced: boolean;
+  /** Cost of every row that has no market PnL (legacy and unpriced v2). */
+  unpricedCostUsd: number;
+  /** A v2 slice exists but Jupiter has no price, so its PnL was skipped. */
+  hasUnpricedV2: boolean;
 };
 
 /** Portfolio PnL from rows `buildPositions` already produced. Does not revalue. */
@@ -228,10 +235,16 @@ export function pnlSummary(rows: PositionRow[]): PnlSummary {
   let pnlUsd = 0;
   let pricedCostUsd = 0;
   let legacyCostUsd = 0;
+  let unpricedCostUsd = 0;
   let hasPriced = false;
+  let hasUnpricedV2 = false;
   for (const row of rows) {
     if (Number.isFinite(row.legacyCostUsd)) legacyCostUsd += row.legacyCostUsd;
-    if (row.pnlUsd == null || !Number.isFinite(row.pnlUsd)) continue;
+    if (row.pnlUsd == null || !Number.isFinite(row.pnlUsd)) {
+      if (Number.isFinite(row.costUsd)) unpricedCostUsd += row.costUsd;
+      if (row.pricedUnits > DUST) hasUnpricedV2 = true;
+      continue;
+    }
     hasPriced = true;
     pnlUsd += row.pnlUsd;
     const v2Cost = row.costUsd - row.legacyCostUsd;
@@ -244,7 +257,18 @@ export function pnlSummary(rows: PositionRow[]): PnlSummary {
     legacyCostUsd,
     hasLegacy: legacyCostUsd > DUST,
     hasPriced,
+    unpricedCostUsd,
+    hasUnpricedV2,
   };
+}
+
+/** Legacy cost basis shows an em dash. A v2 row with no price shows „brak danych”. */
+export function positionPnlKind(
+  row: Pick<PositionRow, "basis" | "pricedUnits" | "pnlUsd">,
+): "legacy" | "nodata" | "value" {
+  if (row.basis === "cost" && row.pricedUnits <= DUST) return "legacy";
+  if (row.pnlUsd == null || !Number.isFinite(row.pnlUsd)) return "nodata";
+  return "value";
 }
 
 export type RunPnlLeg = {

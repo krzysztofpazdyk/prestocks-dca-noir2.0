@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { runLots } from "../lib/position-value";
+import { fillsFor } from "../lib/run-fills";
 import {
   RUN_PRICE_DISC,
   RUN_PRICE_LEN,
   decodeRunPriceAccount,
+  fetchRunPrices,
+  mergeRunPrices,
   runPricePda,
 } from "../lib/run-price";
 
@@ -111,4 +114,64 @@ test("bad discriminator, bad length, wrong program, and a missing account are le
   assert.equal(lots[0].buyPrice, null);
   assert.equal(lots[0].usdcCost, 50);
   assert.equal(lots[0].name, "Anthropic");
+});
+
+test("fetchRunPrices reports ok false when the RPC read throws", async () => {
+  const owner = Keypair.generate().publicKey;
+  const connection = {
+    getMultipleAccountsInfo: async () => {
+      throw new Error("rpc down");
+    },
+  } as unknown as Connection;
+  const got = await fetchRunPrices(connection, owner, [3, 3, 4]);
+  assert.equal(got.ok, false);
+});
+
+test("mergeRunPrices keeps previous entries when the read failed", () => {
+  const prev = new Map<number, string | null>([
+    [1, "keep"],
+    [2, null],
+  ]);
+  const failed = new Map<number, string | null>([
+    [1, null],
+    [2, null],
+  ]);
+  const kept = mergeRunPrices(prev, { map: failed, ok: false });
+  assert.equal(kept.get(1), "keep");
+  assert.equal(kept.get(2), null);
+  const replaced = mergeRunPrices(prev, { map: failed, ok: true });
+  assert.equal(replaced.get(1), null);
+});
+
+test("fillsFor treats a zero price as no slot and keeps a positive fill", () => {
+  const mint = "MintA";
+  const runs = [{ runIndex: 4, mints: [mint] }];
+  const zero = fillsFor(
+    runs,
+    new Map([
+      [
+        4,
+        {
+          mints: [{ toBase58: () => mint }],
+          units: [BigInt(1_000_000)],
+          pricesE6: [BigInt(0)],
+        },
+      ],
+    ]),
+  );
+  assert.equal(zero[0].slots?.[0], null);
+  const good = fillsFor(
+    runs,
+    new Map([
+      [
+        4,
+        {
+          mints: [{ toBase58: () => mint }],
+          units: [BigInt(2_000_000)],
+          pricesE6: [BigInt(3_500_000)],
+        },
+      ],
+    ]),
+  );
+  assert.deepEqual(good[0].slots?.[0], { units: 2, price: 3.5 });
 });

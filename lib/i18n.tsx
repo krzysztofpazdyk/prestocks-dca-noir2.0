@@ -112,9 +112,12 @@ const pl: Dict = {
 
   "top3.title": "Top-3 · rekomendacje",
   "top3.titleLive": "Top-3 · ranking (live)",
+  "top3.restored": "z {time}",
   "btn.generate": "Wygeneruj rekomendacje",
   "btn.generating": "Generuję…",
   "btn.purchase": "Dokonaj zakupu",
+  "btn.confirm": "Potwierdź",
+  "btn.cancel": "Anuluj",
   "btn.buying": "Kupuję…",
   "btn.waiting": "Czekam na potwierdzenie…",
   "btn.txPending": "Transakcja…",
@@ -142,6 +145,8 @@ const pl: Dict = {
   "purchase.disabled.noRecs": "Zakup nieaktywny — najpierw kliknij Wygeneruj rekomendacje (top-3).",
   "purchase.disabled.notReady": "Zakup nieaktywny — najpierw wpłać USDC na Overview (konto powstaje z wpłatą).",
   "purchase.disabled.rpcError": "Zakup nieaktywny — brak połączenia z RPC Devnet. Kliknij Odśwież.",
+  "purchase.disabled.flatRanking": "Zakup nieaktywny — ranking awaryjny nie rozróżnia spółek (wszystkie 50,0). Spróbuj ponownie później albo włącz „Premia IPO ma znaczenie”.",
+  "purchase.confirmBudget": "Zmienię budżet on-chain z {from} na {to} USDC i kupię. Potwierdzić?",
   "purchase.disabled.vaultLow": "Zakup nieaktywny — vault ma {have} USDC, potrzeba ≥ {need}. Wpłać z portfela (faucet zasila portfel, nie vault).",
   "purchase.disabled.generic": "Zakup nieaktywny — sprawdź vault, ranking i status Predca.",
   "tx.recheck": "Sprawdź ponownie",
@@ -217,6 +222,7 @@ const pl: Dict = {
   "settings.intro":
     "Tygodniowa kwota zapisuje się lokalnie od razu. Konto on-chain powstaje przy pierwszej wpłacie na Overview. Potem budżet zmienia „Zapisz budżet on-chain”, Manual Buy albo włączenie auto-zakupu. BYOK zostaje w localStorage.",
   "settings.weeklyAmount": "Tygodniowa kwota (USDC)",
+  "settings.weeklyInvalid": "Podaj kwotę ≥ 1 USDC, max 2 miejsca po przecinku.",
   "settings.weeklyAtEnable":
     "Zapis lokalny od razu. Bez konta Predca kwota on-chain powstaje przy wpłacie na Overview.",
   "settings.budgetNeedsDeposit":
@@ -246,8 +252,17 @@ const pl: Dict = {
   "settings.cleared": "· wyczyszczono ✓",
   "settings.exclusions": "Wykluczenia (np. xAI, OpenAI) — stosowane w rankingu",
   "settings.buyDespiteIpo": "Kup PreStock mimo odbytego IPO",
-  "settings.deadlineInvalid": "Uwzględniaj tokeny z terminem ważności (po dacie końcowej stają się bezwartościowe).",
+  "settings.deadlineInvalid": "Dopuszczaj tokeny po terminie ważności lub z nieważnym terminem (po dacie końcowej są bezwartościowe).",
   "settings.ipoPremium": "Premia IPO ma znaczenie (uwzględniaj różnicę wyceny tokenu względem rynku, np. −20% / +34%).",
+  "settings.noData": "brak danych",
+  "settings.noDataTooltip": "PreStocks API nie podaje jeszcze tych danych — przełącznik nic nie zmienia.",
+  "settings.dataKnown": "Dane: {list}",
+  "settings.dataUnknown": "Brak danych: {names} — te spółki nie są filtrowane.",
+  "settings.dataStale": "Nieaktualne (> 7 dni): {names}.",
+  "settings.ipoListed": "notowana {date}",
+  "settings.ipoAnnounced": "IPO planowane {date}",
+  "settings.deadlineOn": "termin {date}",
+  "settings.checkedOn": "sprawdzono {date}",
   "settings.prefsDirtyHint":
     "Zmieniono ustawienia. Aby zapisać je u keepersa, trzeba podpisać wiadomość w portfelu.",
   "settings.prefsSignSave": "Podpisz i zapisz",
@@ -313,16 +328,21 @@ const pl: Dict = {
   "prices.col.status": "Status",
   "prices.loading": "Ładowanie cen…",
   "prices.lastRead": "ostatni odczyt · {time}",
+  "prices.refresh": "Odśwież ceny",
 
   "pnl.title": "Zysk/strata",
   "pnl.total": "Łącznie",
   "pnl.atCostValue": "Wartość po koszcie: {value}",
   "pnl.legacyNote": "PnL dostępny dla zakupów po cenie rynkowej (wkrótce).",
   "pnl.partialNote": "PnL tylko dla zakupów po cenie rynkowej; część pozycji po koszcie.",
+  "pnl.noPriceNote": "Część zakupów po cenie rynkowej nie ma teraz ceny — PnL pominięty.",
 
   "premium.label": "Premia vs rynek: {pct}",
   "premium.noData": "Premia: brak danych",
   "premium.estimate": "szacunek",
+  "rank.premiumBasis.server_estimate": "Ranking AI użył premii szacunkowych serwera (nie live). Premie przy spółkach są live z Jupitera.",
+  "rank.premiumBasis.live": "Ranking użył premii live z Jupitera; spółki bez danych liczone bez premii.",
+  "rank.premiumBasis.none": "Ranking bez premii (przełącznik wyłączony).",
 
   "prestocks.snapshotDated":
     "Brak live PreStocks. Użyto statycznego snapshota z {date} (nie live).",
@@ -423,9 +443,12 @@ const en: Dict = {
 
   "top3.title": "Top-3 · recommendations",
   "top3.titleLive": "Top-3 · ranking (live)",
+  "top3.restored": "from {time}",
   "btn.generate": "Generate recommendations",
   "btn.generating": "Generating…",
   "btn.purchase": "Purchase",
+  "btn.confirm": "Confirm",
+  "btn.cancel": "Cancel",
   "btn.buying": "Buying…",
   "btn.waiting": "Waiting for confirmation…",
   "btn.txPending": "Transaction…",
@@ -453,6 +476,8 @@ const en: Dict = {
   "purchase.disabled.noRecs": "Purchase disabled — click Generate recommendations first (top-3).",
   "purchase.disabled.notReady": "Purchase disabled — deposit USDC on Overview first (the account is created with that deposit).",
   "purchase.disabled.rpcError": "Purchase disabled — no Devnet RPC connection. Click Refresh.",
+  "purchase.disabled.flatRanking": "Purchase disabled — the backup ranking can't tell names apart (all 50.0). Try again later or turn on “IPO premium matters”.",
+  "purchase.confirmBudget": "I'll change the on-chain budget from {from} to {to} USDC and buy. Confirm?",
   "purchase.disabled.vaultLow": "Purchase disabled — vault has {have} USDC, need ≥ {need}. Deposit from wallet (faucet fills wallet, not vault).",
   "purchase.disabled.generic": "Purchase disabled — check vault, ranking, and Predca status.",
   "tx.recheck": "Check again",
@@ -528,6 +553,7 @@ const en: Dict = {
   "settings.intro":
     "The weekly amount saves locally right away. The on-chain account is created with the first deposit on Overview. After that, change the budget with “Save budget on-chain”, Manual Buy, or by enabling auto-buy. BYOK stays in localStorage.",
   "settings.weeklyAmount": "Weekly amount (USDC)",
+  "settings.weeklyInvalid": "Enter an amount ≥ 1 USDC, at most 2 decimals.",
   "settings.weeklyAtEnable":
     "Saved locally right away. Until a Predca account exists, the on-chain amount is set by the deposit on Overview.",
   "settings.budgetNeedsDeposit":
@@ -557,8 +583,17 @@ const en: Dict = {
   "settings.cleared": "· cleared ✓",
   "settings.exclusions": "Exclusions (e.g. xAI, OpenAI) — applied to ranking",
   "settings.buyDespiteIpo": "Buy PreStock even after IPO",
-  "settings.deadlineInvalid": "Include tokens with an expiry date (they become worthless after the end date).",
+  "settings.deadlineInvalid": "Allow tokens past their expiry or with an invalid deadline (they are worthless after the end date).",
   "settings.ipoPremium": "IPO premium matters (factor in token vs market pricing gap, e.g. −20% / +34%).",
+  "settings.noData": "no data",
+  "settings.noDataTooltip": "The PreStocks API doesn't provide this data yet — the toggle has no effect.",
+  "settings.dataKnown": "Data: {list}",
+  "settings.dataUnknown": "No data: {names} — these names are not filtered.",
+  "settings.dataStale": "Stale (> 7 days): {names}.",
+  "settings.ipoListed": "listed {date}",
+  "settings.ipoAnnounced": "IPO planned {date}",
+  "settings.deadlineOn": "deadline {date}",
+  "settings.checkedOn": "checked {date}",
   "settings.prefsDirtyHint":
     "Settings changed. Sign a wallet message to save them to the keeper.",
   "settings.prefsSignSave": "Sign & save",
@@ -624,16 +659,21 @@ const en: Dict = {
   "prices.col.status": "Status",
   "prices.loading": "Loading prices…",
   "prices.lastRead": "last read · {time}",
+  "prices.refresh": "Refresh prices",
 
   "pnl.title": "Profit/loss",
   "pnl.total": "Total",
   "pnl.atCostValue": "Value at cost: {value}",
   "pnl.legacyNote": "PnL available for purchases at market price (coming soon).",
   "pnl.partialNote": "PnL only for market-price purchases; some positions are at cost.",
+  "pnl.noPriceNote": "Some market-price purchases have no current price — P/L skipped.",
 
   "premium.label": "Premium vs market: {pct}",
   "premium.noData": "Premium: no data",
   "premium.estimate": "estimate",
+  "rank.premiumBasis.server_estimate": "AI ranking used the server's estimated premiums (not live). Premiums shown are live from Jupiter.",
+  "rank.premiumBasis.live": "Ranking used live Jupiter premiums; names without data scored without a premium.",
+  "rank.premiumBasis.none": "Ranking ignores premiums (toggle off).",
 
   "prestocks.snapshotDated":
     "No live PreStocks. Using static snapshot from {date} (not live).",

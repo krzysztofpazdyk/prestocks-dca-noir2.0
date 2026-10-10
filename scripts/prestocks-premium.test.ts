@@ -42,7 +42,7 @@ test("buildProducts prefers jupiter stock premium and ignores OURA and xAI", () 
   assert.equal(anth.premium_source, "jupiter_stockdata");
   assert.equal(summarizePremiumSource(products), "jupiter_stockdata");
   const spacex = products.find((p) => p.name === "SpaceX");
-  assert.equal(spacex?.near_ipo, true);
+  assert.equal(spacex?.near_ipo, false);
 });
 
 test("token price falls back to usdPrice, and a dead premium uses the hardcoded estimate", () => {

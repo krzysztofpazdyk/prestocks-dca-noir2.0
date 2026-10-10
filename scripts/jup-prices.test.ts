@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { MINTS, XAI_MINT } from "../lib/universe";
 import {
@@ -350,6 +351,75 @@ test("price url lists the 8 universe mints and not xAI", () => {
   assert.equal(Object.keys(empty.quotes).length, 8);
 });
 
+test("a partial Jupiter response keeps a cached price and a later failure still has it", async () => {
+  const storage = memStore();
+  const full = await fetchJupPrices({
+    fetchImpl: scripted([{ body: bodyFor(() => liveRow(10)) }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.deepEqual(full.carried, []);
+  assert.equal(full.quotes.OpenAI.usdPrice, 10);
+
+  const partial = scripted([
+    { body: bodyFor((name) => (name === "Anthropic" ? liveRow(11) : undefined)) },
+  ]);
+  const got = await fetchJupPrices({
+    fetchImpl: partial.fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.equal(got.source, "live");
+  assert.equal(got.quotes.Anthropic.usdPrice, 11);
+  assert.equal(got.quotes.OpenAI.usdPrice, 10);
+  assert.ok(got.carried.includes("OpenAI"));
+  assert.equal(got.carried.includes("Anthropic"), false);
+  const saved = JSON.parse(storage.getItem(JUP_CACHE_KEY) ?? "{}") as {
+    quotes: Record<string, { usdPrice: number | null }>;
+  };
+  assert.equal(saved.quotes.OpenAI.usdPrice, 10);
+
+  const down = await fetchJupPrices({
+    fetchImpl: scripted([{ fail: "throw" }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.notEqual(down.quotes.OpenAI.usdPrice, null);
+  assert.equal(down.quotes.OpenAI.usdPrice, 10);
+});
+
+test("a full Jupiter response carries nothing", async () => {
+  const storage = memStore();
+  seed(storage, 8, NOW - 60_000);
+  const got = await fetchJupPrices({
+    fetchImpl: scripted([{ body: bodyFor(() => liveRow(9)) }]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.deepEqual(got.carried, []);
+  assert.equal(got.quotes.OpenAI.usdPrice, 9);
+});
+
+test("a cache older than 7 days is not carried into a partial response", async () => {
+  const storage = memStore();
+  seed(storage, 123, NOW - 7 * DAY - 1);
+  const got = await fetchJupPrices({
+    fetchImpl: scripted([
+      { body: bodyFor((name) => (name === "Anthropic" ? liveRow(4) : undefined)) },
+    ]).fetchImpl,
+    storage,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.equal(got.quotes.OpenAI.usdPrice, null);
+  assert.equal(got.carried.includes("OpenAI"), false);
+  assert.equal(got.quotes.Anthropic.usdPrice, 4);
+});
+
 test("low liquidity keeps the price and flags under $20k", () => {
   const thin = parseJupResponse(
     { [MINTS.Kalshi]: { ...liveRow(4, 5), liquidity: 19_999 } },
@@ -360,4 +430,71 @@ test("low liquidity keeps the price and flags under $20k", () => {
   const deep = quote({ liquidityUsd: 20_000 });
   assert.equal(isLowLiquidity(deep), false);
   assert.equal(isLowLiquidity(quote({ liquidityUsd: null })), false);
+});
+
+test("a carried price expires 7 days after the real read, not the last cache write", async () => {
+  const storage = memStore();
+  const day0 = NOW;
+  let now = day0;
+  await fetchJupPrices({
+    fetchImpl: scripted([{ body: bodyFor(() => liveRow(10)) }]).fetchImpl,
+    storage,
+    now: () => now,
+    sleep: async () => {},
+  });
+
+  now = day0 + 6 * DAY;
+  const day6 = await fetchJupPrices({
+    fetchImpl: scripted([
+      { body: bodyFor((name) => (name === "Anthropic" ? liveRow(11) : undefined)) },
+    ]).fetchImpl,
+    storage,
+    now: () => now,
+    sleep: async () => {},
+  });
+  assert.equal(day6.quotes.OpenAI.usdPrice, 10);
+  assert.ok(day6.carried.includes("OpenAI"));
+  assert.equal(day6.carriedAt?.OpenAI, day0);
+  const saved6 = JSON.parse(storage.getItem(JUP_CACHE_KEY) ?? "{}") as {
+    fetchedAt: number;
+    priceAt: Record<string, number>;
+  };
+  assert.equal(saved6.fetchedAt, now);
+  assert.equal(saved6.priceAt.OpenAI, day0);
+  assert.equal(saved6.priceAt.Anthropic, now);
+
+  now = day0 + 12 * DAY;
+  const day12 = await fetchJupPrices({
+    fetchImpl: scripted([
+      { body: bodyFor((name) => (name === "Anthropic" ? liveRow(12) : undefined)) },
+    ]).fetchImpl,
+    storage,
+    now: () => now,
+    sleep: async () => {},
+  });
+  assert.equal(day12.quotes.OpenAI.usdPrice, null);
+  assert.equal(day12.carried.includes("OpenAI"), false);
+  assert.equal(day12.quotes.Anthropic.usdPrice, 12);
+
+  const legacy = memStore();
+  const seen = NOW - 6 * DAY;
+  seed(legacy, 7, seen);
+  const fromLegacy = await fetchJupPrices({
+    fetchImpl: scripted([
+      { body: bodyFor((name) => (name === "Anthropic" ? liveRow(4) : undefined)) },
+    ]).fetchImpl,
+    storage: legacy,
+    now: () => NOW,
+    sleep: async () => {},
+  });
+  assert.equal(fromLegacy.quotes.OpenAI.usdPrice, 7);
+  assert.ok(fromLegacy.carried.includes("OpenAI"));
+  assert.equal(fromLegacy.carriedAt?.OpenAI, seen);
+
+  const overview = readFileSync(
+    new URL("../components/OverviewView.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(overview, /carriedAt\?\.\[name\]/);
+  assert.match(overview, /fmtPriceClock\(at, now, locale\)/);
 });

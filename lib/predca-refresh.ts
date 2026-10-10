@@ -37,3 +37,17 @@ export function loadJupPricesInBackground<T>(
     }
   })();
 }
+
+/**
+ * Price-only refresh. Does not read RPC and does not write portfolio state.
+ * Applies the loaded value only while `still()` is true.
+ */
+export async function refreshPrices<T>(
+  load: () => Promise<T>,
+  still: () => boolean,
+  apply: (value: T) => void,
+): Promise<void> {
+  const value = await load();
+  if (!still()) return;
+  apply(value);
+}

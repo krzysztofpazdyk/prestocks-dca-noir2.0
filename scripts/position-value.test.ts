@@ -198,6 +198,15 @@ test("Figure AI matches the FigureAI quote and cache or suspect marks the row st
     prices({ FigureAI: 10 }, "live", ["FigureAI"]),
   )[0];
   assert.equal(suspect.stale, true);
+
+  const carried = prices({ "Figure AI": 10 }, "live");
+  carried.carried = ["Figure AI"];
+  const carriedRow = buildPositions(
+    [lot({ name: "Figure AI", usdcCost: 5 })],
+    [{ name: "Figure AI", amount: 5 }],
+    carried,
+  )[0];
+  assert.equal(carriedRow.stale, true);
 });
 
 test("runLots without a RunPrice account are legacy", () => {

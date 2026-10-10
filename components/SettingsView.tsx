@@ -1,8 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useKeeperSignMessage } from "@/components/PrivyWalletBridge";
+import {
+  companyDataClientSnapshot,
+  companyDataNeedsRefresh,
+  companyDataServerSnapshot,
+  formatCompanyDate,
+  refreshStaleCompanyData,
+  subscribeCompanyData,
+  toggleAvailability,
+  type CompanyData,
+  type ToggleBucket,
+} from "@/lib/company-data";
 import { DEFAULT_SETTINGS } from "@/lib/mock-data";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { TxNotice } from "@/components/TxNotice";
@@ -35,8 +46,9 @@ import {
   readWeeklyBudgetUsd,
   writeWeeklyBudgetUsd,
 } from "@/lib/auto-weekly-buy";
+import { budgetsDiffer, parseWeeklyDraft } from "@/lib/weekly-budget";
 import { useAutoWeeklyBuy } from "@/lib/hooks/useAutoWeeklyBuy";
-import { LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
+import { dcaApiBase, LS_TYPESAFE, LS_XAI, readTypesafeKey } from "@/lib/keys";
 
 /** Keeper-synced ranking prefs snapshot for dirty detection. */
 type PrefsBaseline = {
@@ -87,6 +99,9 @@ export function SettingsView() {
   signMessageRef.current = signMessage;
   const { t } = useI18n();
   const [weekly, setWeekly] = useState(DEFAULT_SETTINGS.weeklyAmountUsd);
+  const [weeklyDraft, setWeeklyDraft] = useState(
+    String(DEFAULT_SETTINGS.weeklyAmountUsd),
+  );
   const [exclusions, setExclusions] = useState(
     DEFAULT_SETTINGS.exclusions.join(", "),
   );
@@ -120,11 +135,28 @@ export function SettingsView() {
   const [weeklyReady, setWeeklyReady] = useState(false);
   const ownerBase58 = publicKey?.toBase58() ?? null;
   useEffect(() => {
-    setWeekly(
-      readWeeklyBudgetUsd(DEFAULT_SETTINGS.weeklyAmountUsd, ownerBase58),
+    const amount = readWeeklyBudgetUsd(
+      DEFAULT_SETTINGS.weeklyAmountUsd,
+      ownerBase58,
     );
+    setWeekly(amount);
+    setWeeklyDraft(String(Math.round(amount * 100) / 100));
     setWeeklyReady(true);
   }, [ownerBase58]);
+
+  const companySnap = useSyncExternalStore(
+    subscribeCompanyData,
+    companyDataClientSnapshot,
+    companyDataServerSnapshot,
+  );
+  const availability = toggleAvailability(companySnap.byName, companySnap.readAt);
+  useEffect(() => {
+    const snap = companyDataClientSnapshot();
+    if (!companyDataNeedsRefresh(snap.byName, snap.readAt)) return;
+    const base = dcaApiBase();
+    if (!base) return;
+    void refreshStaleCompanyData(base);
+  }, []);
 
   // Hydrate ranking toggles from keeper GET /prefs (authoritative for buys).
   // prefsReady stays false until hydrate finishes so we never push stale local
@@ -239,10 +271,14 @@ export function SettingsView() {
 
   // Persist weekly to this wallet's key. Disconnected edits stay in React state.
   // On-chain budget is a separate step, and only after UserConfig exists.
+  // `weekly` changes only after parseWeeklyDraft succeeds, so an empty or
+  // partial draft never replaces the last valid amount.
   useEffect(() => {
     if (!weeklyReady || !ownerBase58) return;
+    const parsed = parseWeeklyDraft(String(weekly));
+    if (!parsed.ok) return;
     const id = window.setTimeout(() => {
-      writeWeeklyBudgetUsd(weekly, ownerBase58);
+      writeWeeklyBudgetUsd(parsed.value, ownerBase58);
     }, 300);
     return () => window.clearTimeout(id);
   }, [weekly, weeklyReady, ownerBase58]);
@@ -267,21 +303,22 @@ export function SettingsView() {
     syncedBaseline != null &&
     !baselinesEqual(syncedBaseline, currentBaseline);
 
-  const BUDGET_EPS = 0.000001;
   const onChainWeekly = predca.weeklyBudgetUsd;
+  const weeklyParsed = parseWeeklyDraft(weeklyDraft);
   // Hide Save until UserConfig exists. A null on-chain budget is "no account",
   // not a dirty value — that used to send initialize_user with no deposit.
   const budgetDirtyOnChain =
-    onChainWeekly != null &&
-    Math.abs(weekly - onChainWeekly) > BUDGET_EPS;
+    onChainWeekly != null && budgetsDiffer(weekly, onChainWeekly);
 
   async function saveWeeklyBudgetOnChain() {
+    const parsed = parseWeeklyDraft(weeklyDraft);
+    if (!parsed.ok) return;
     if (predca.pendingSignature != null || predca.pendingSignatureNow()) return;
     if (predca.status === "error") return;
-    writeWeeklyBudgetUsd(weekly, ownerBase58);
+    writeWeeklyBudgetUsd(parsed.value, ownerBase58);
     predca.clearMessages();
     if (!connected || !predca.mint || !predca.config) return;
-    await predca.setWeeklyBudget(weekly);
+    await predca.setWeeklyBudget(parsed.value);
   }
 
   const budgetBtnLabel = predca.txPending
@@ -402,15 +439,23 @@ export function SettingsView() {
       </label>
 
       <div className="space-y-3 rounded-lg border border-[#1e2633] bg-[#141820] p-5">
-        <Toggle
+        <CompanyToggle
           label={t("settings.buyDespiteIpo")}
           checked={buyDespiteIpo}
           onChange={setBuyDespiteIpo}
+          disabled={!availability.buyDespiteIpo.enabled}
+          bucket={availability.buyDespiteIpo}
+          kind="ipo"
+          byName={companySnap.byName}
         />
-        <Toggle
+        <CompanyToggle
           label={t("settings.deadlineInvalid")}
           checked={deadlineInvalid}
           onChange={setDeadlineInvalid}
+          disabled={!availability.deadlinesUnimportant.enabled}
+          bucket={availability.deadlinesUnimportant}
+          kind="deadline"
+          byName={companySnap.byName}
         />
         <Toggle
           label={t("settings.ipoPremium")}
@@ -463,20 +508,25 @@ export function SettingsView() {
             {t("settings.weeklyAmount")}
           </span>
           <input
-            type="number"
-            min={1}
-            step={1}
-            value={weekly}
+            type="text"
+            inputMode="decimal"
+            value={weeklyDraft}
             onChange={(e) => {
-              const n = Number(e.target.value);
-              setWeekly(Number.isFinite(n) ? Math.max(1, n) : 1);
+              const next = e.target.value;
+              setWeeklyDraft(next);
+              const parsed = parseWeeklyDraft(next);
+              if (parsed.ok) setWeekly(parsed.value);
               predca.clearToasts();
             }}
             onBlur={() => {
-              if (ownerBase58) writeWeeklyBudgetUsd(weekly, ownerBase58);
+              const parsed = parseWeeklyDraft(weeklyDraft);
+              if (parsed.ok && ownerBase58) writeWeeklyBudgetUsd(parsed.value, ownerBase58);
             }}
             className="mono-num w-full rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2.5 text-base text-[#2dd4bf] outline-none focus:border-[#2dd4bf66]"
           />
+          {weeklyParsed.ok ? null : (
+            <p className="text-xs text-[#fbbf24]">{t("settings.weeklyInvalid")}</p>
+          )}
           <p className="text-xs text-[#8b95a8]">
             {t("settings.weeklySplit", { amount: (weekly / 3).toFixed(2) })}
             {" "}
@@ -500,7 +550,7 @@ export function SettingsView() {
         {budgetDirtyOnChain && connected && predca.mint ? (
           <button
             type="button"
-            disabled={chainBusy || predca.status === "error"}
+            disabled={chainBusy || predca.status === "error" || !weeklyParsed.ok}
             onClick={() => void saveWeeklyBudgetOnChain()}
             className="w-full rounded border border-[#2dd4bf44] bg-[#0c0e12] py-2 text-[10px] uppercase tracking-wider text-[#2dd4bf] hover:bg-[#2dd4bf11] disabled:opacity-40"
           >
@@ -724,17 +774,20 @@ function Toggle({
   checked,
   onChange,
   disabled = false,
+  title,
 }: {
   label: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
       type="button"
       aria-pressed={checked}
       disabled={disabled}
+      title={title}
       onClick={() => {
         if (disabled) return;
         onChange(!checked);
@@ -756,5 +809,127 @@ function Toggle({
         />
       </span>
     </button>
+  );
+}
+
+function CompanyFacts({
+  bucket,
+  kind,
+  byName,
+}: {
+  bucket: ToggleBucket;
+  kind: "ipo" | "deadline";
+  byName: Record<string, CompanyData>;
+}) {
+  const { t, locale } = useI18n();
+  const known = bucket.known.map((name, index) => {
+    const data = byName[name];
+    if (!data) return null;
+    let phrase = name;
+    if (kind === "ipo" && data.ipoStatus === "listed" && data.ipoDate != null) {
+      phrase = `${name} — ${t("settings.ipoListed", {
+        date: formatCompanyDate(data.ipoDate, locale, "full"),
+      })}`;
+    } else if (
+      kind === "ipo" &&
+      data.ipoStatus === "announced" &&
+      data.ipoDate != null
+    ) {
+      phrase = `${name} — ${t("settings.ipoAnnounced", {
+        date: formatCompanyDate(data.ipoDate, locale, "full"),
+      })}`;
+    } else if (kind === "deadline" && data.deadline != null) {
+      phrase = `${name} — ${t("settings.deadlineOn", {
+        date: formatCompanyDate(data.deadline, locale, "full"),
+      })}`;
+    }
+    const checked = t("settings.checkedOn", {
+      date: formatCompanyDate(data.checkedAt, locale, "short"),
+    });
+    return (
+      <span key={name}>
+        {index > 0 ? ", " : null}
+        <a
+          href={data.source}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[#a78bfa] underline"
+        >
+          {phrase}
+        </a>
+        {` ${checked}`}
+      </span>
+    );
+  });
+  const knownTemplate = t("settings.dataKnown");
+  const knownAt = knownTemplate.indexOf("{list}");
+  const staleNames = bucket.stale
+    .map((name) => {
+      const data = byName[name];
+      if (!data) return name;
+      const checked = t("settings.checkedOn", {
+        date: formatCompanyDate(data.checkedAt, locale, "short"),
+      });
+      return `${name} (${checked})`;
+    })
+    .join(", ");
+  return (
+    <div className="space-y-1 text-[10px] normal-case leading-relaxed tracking-normal text-[#8b95a8]">
+      {bucket.known.length > 0 ? (
+        <p>
+          {knownAt < 0 ? knownTemplate : knownTemplate.slice(0, knownAt)}
+          {known}
+          {knownAt < 0 ? null : knownTemplate.slice(knownAt + "{list}".length)}
+        </p>
+      ) : null}
+      {bucket.unknown.length > 0 ? (
+        <p>{t("settings.dataUnknown", { names: bucket.unknown.join(", ") })}</p>
+      ) : null}
+      {bucket.stale.length > 0 ? (
+        <p>{t("settings.dataStale", { names: staleNames })}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function CompanyToggle({
+  label,
+  checked,
+  onChange,
+  disabled,
+  bucket,
+  kind,
+  byName,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled: boolean;
+  bucket: ToggleBucket;
+  kind: "ipo" | "deadline";
+  byName: Record<string, CompanyData>;
+}) {
+  const { t } = useI18n();
+  const title = disabled ? t("settings.noDataTooltip") : undefined;
+  return (
+    <div className="space-y-1">
+      <Toggle
+        label={label}
+        checked={checked}
+        onChange={onChange}
+        disabled={disabled}
+        title={title}
+      />
+      {disabled ? (
+        <p
+          className="text-[10px] normal-case tracking-normal text-[#8b95a8]"
+          title={title}
+        >
+          {t("settings.noData")}
+        </p>
+      ) : (
+        <CompanyFacts bucket={bucket} kind={kind} byName={byName} />
+      )}
+    </div>
   );
 }

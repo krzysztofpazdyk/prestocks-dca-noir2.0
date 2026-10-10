@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   loadJupPricesInBackground,
+  refreshPrices,
   refreshWriteStillCurrent,
 } from "../lib/predca-refresh";
 
@@ -249,4 +250,49 @@ test("a late jupiter quote applies, and a wallet change drops it", async () => {
   await stale;
   assert.equal(quote, null);
   assert.equal(pricesLoading, true);
+});
+
+test("refreshPrices applies a quote only while still() and does not touch a snapshot", async () => {
+  const src = readFileSync(new URL("../lib/predca-refresh.ts", import.meta.url), "utf8");
+  const fn = src.slice(src.indexOf("export async function refreshPrices"));
+  assert.doesNotMatch(fn, /snapshot|setSnapshot|reportError|setLoading/);
+  const snapshot = { touched: 0 };
+  let applied: number | null = null;
+  await refreshPrices(
+    async () => 7,
+    () => false,
+    () => {
+      applied = 7;
+      snapshot.touched += 1;
+    },
+  );
+  assert.equal(applied, null);
+  assert.equal(snapshot.touched, 0);
+  await refreshPrices(
+    async () => 11,
+    () => true,
+    (value) => {
+      applied = value;
+    },
+  );
+  assert.equal(applied, 11);
+  assert.equal(snapshot.touched, 0);
+});
+
+test("PricesPanel refresh does not depend on a connected wallet", () => {
+  const src = readFileSync(
+    new URL("../components/OverviewView.tsx", import.meta.url),
+    "utf8",
+  );
+  const start = src.indexOf("function PricesPanel");
+  const end = src.indexOf("function fmtPanelPct");
+  assert.ok(start > 0 && end > start);
+  const panel = src.slice(start, end);
+  assert.match(panel, /onRefresh/);
+  assert.match(panel, /prices\.refresh/);
+  assert.match(panel, /disabled=\{pricesLoading\}/);
+  assert.doesNotMatch(panel, /connected/);
+  assert.match(src, /predca\.refreshPrices\(\)/);
+  const bar = src.indexOf("disabled={!connected || predca.loading}");
+  assert.ok(bar > 0);
 });

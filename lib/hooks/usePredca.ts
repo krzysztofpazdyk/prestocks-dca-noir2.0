@@ -24,6 +24,7 @@ import {
 } from "@/lib/manual-buy-guard";
 import {
   loadJupPricesInBackground,
+  refreshPrices as refreshPricesOnly,
   refreshWriteStillCurrent,
 } from "@/lib/predca-refresh";
 import {
@@ -79,7 +80,8 @@ import {
   valueWeights,
   type RunLotSource,
 } from "@/lib/position-value";
-import { fetchRunPrices, type DecodedRunPrice } from "@/lib/run-price";
+import { fillsFor, type RunFillView } from "@/lib/run-fills";
+import { fetchRunPrices, mergeRunPrices, type DecodedRunPrice } from "@/lib/run-price";
 import type { Holding } from "@/lib/mock-data";
 import {
   allMockMints,
@@ -135,11 +137,7 @@ function bnNum(v: BN | number | { toNumber?: () => number }): number {
   return Number(v);
 }
 
-export type RunFillView = {
-  runIndex: string;
-  /** null when this run has no RunPrice account (legacy 1:1). */
-  slots: Array<{ units: number; price: number } | null> | null;
-};
+export type { RunFillView };
 
 function runSources(runs: RunRecordData[]): RunLotSource[] {
   return runs.map((run) => ({
@@ -148,27 +146,6 @@ function runSources(runs: RunRecordData[]): RunLotSource[] {
     mints: run.mints.map((m) => (typeof m === "string" ? m : m.toBase58())),
     amountsUsd: run.amounts.map((a) => rawToDollars(a)),
   }));
-}
-
-function fillsFor(
-  runs: RunRecordData[],
-  decoded: ReadonlyMap<number, DecodedRunPrice | null>,
-): RunFillView[] {
-  return runs.map((run) => {
-    const runIndex = bnNum(run.runIndex);
-    const dec = decoded.get(runIndex) ?? null;
-    const mints = run.mints.map((m) => (typeof m === "string" ? m : m.toBase58()));
-    if (!dec) return { runIndex: String(runIndex), slots: null };
-    const slots = mints.map((mint, i) => {
-      const decMint = dec.mints[i]?.toBase58();
-      if (decMint !== mint) return null;
-      const units = Number(dec.units[i]) / 1e6;
-      const price = Number(dec.pricesE6[i]) / 1e6;
-      if (!Number.isFinite(units) || !Number.isFinite(price)) return null;
-      return { units, price };
-    });
-    return { runIndex: String(runIndex), slots };
-  });
 }
 
 function runToLastPurchase(run: RunRecordData): OnChainLastPurchase {
@@ -482,9 +459,11 @@ function usePredcaImpl() {
             owner,
             records.map((r) => bnNum(r.runIndex)),
           );
-          if (still()) setRunPriceByIndex(decoded);
+          if (still()) {
+            setRunPriceByIndex((prev) => mergeRunPrices(prev, decoded));
+          }
         } catch {
-          if (still()) setRunPriceByIndex(new Map());
+          /* RPC threw outside fetchRunPrices — keep the previous map. */
         }
       } else {
         const [ownerBal, sol, tokens] = await Promise.all([
@@ -521,6 +500,26 @@ function usePredcaImpl() {
     void refresh();
   }, [refresh]);
 
+  const refreshPrices = useCallback(async () => {
+    const epochAtStart = dataEpoch.current;
+    const ownerAtStart = owner?.toBase58() ?? null;
+    const still = () =>
+      refreshWriteStillCurrent(
+        epochAtStart,
+        ownerAtStart,
+        dataEpoch.current,
+        ownerRef.current?.toBase58() ?? null,
+      );
+    setPricesLoading(true);
+    try {
+      await refreshPricesOnly(fetchJupPrices, still, (value) => {
+        if (still()) setJupPrices(value);
+      });
+    } finally {
+      if (still()) setPricesLoading(false);
+    }
+  }, [owner]);
+
   useEffect(() => {
     if (!ownerKey) return;
     const ownerAtStart = ownerKey;
@@ -556,7 +555,14 @@ function usePredcaImpl() {
   );
 
   const runFills = useMemo(
-    () => fillsFor(runs, runPriceByIndex),
+    () =>
+      fillsFor(
+        runs.map((run) => ({
+          runIndex: bnNum(run.runIndex),
+          mints: run.mints.map((m) => (typeof m === "string" ? m : m.toBase58())),
+        })),
+        runPriceByIndex,
+      ),
     [runs, runPriceByIndex],
   );
 
@@ -1544,6 +1550,7 @@ function usePredcaImpl() {
     positions,
     jupPrices,
     pricesLoading,
+    refreshPrices,
     runFills,
     weeklyBudgetUsd,
     runs,

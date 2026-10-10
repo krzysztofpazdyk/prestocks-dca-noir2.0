@@ -39,6 +39,10 @@ export type JupPrices = {
   fetchedAt: number;
   source: "live" | "cache";
   suspect: string[];
+  /** Names whose usdPrice was kept from a cache younger than 7 days. */
+  carried: string[];
+  /** Real read time of a carried price. Missing name → the response `fetchedAt`. */
+  carriedAt?: Record<string, number>;
 };
 
 export type JupStorage = {
@@ -55,7 +59,12 @@ export type FetchJupOptions = {
   timeoutMs?: number;
 };
 
-type CachedJup = { quotes: Record<string, JupQuote>; fetchedAt: number };
+type CachedJup = {
+  quotes: Record<string, JupQuote>;
+  fetchedAt: number;
+  /** Last response that actually returned usdPrice for that name. */
+  priceAt: Record<string, number>;
+};
 
 export function canonicalName(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "");
@@ -172,6 +181,7 @@ export function emptyJupPrices(now = 0): JupPrices {
     fetchedAt: now,
     source: "live",
     suspect: [],
+    carried: [],
   };
 }
 
@@ -253,7 +263,11 @@ export function readJupPriceCache(
   }
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { quotes?: unknown; fetchedAt?: unknown };
+    const parsed = JSON.parse(raw) as {
+      quotes?: unknown;
+      fetchedAt?: unknown;
+      priceAt?: unknown;
+    };
     const fetchedAt = Number(parsed.fetchedAt);
     if (!Number.isFinite(fetchedAt)) return null;
     if (now - fetchedAt > CACHE_MAX_AGE_MS) return null;
@@ -265,20 +279,41 @@ export function readJupPriceCache(
     for (const [name, mint] of Object.entries(MINTS)) {
       quotes[name] = sanitizeCachedQuote(name, mint, stored[name]);
     }
-    return { quotes, fetchedAt };
+    return { quotes, fetchedAt, priceAt: priceAtFromCache(parsed.priceAt, fetchedAt, quotes) };
   } catch {
     return null;
   }
 }
 
+function priceAtFromCache(
+  raw: unknown,
+  fetchedAt: number,
+  quotes: Record<string, JupQuote>,
+): Record<string, number> {
+  const stored =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const out: Record<string, number> = {};
+  for (const name of Object.keys(quotes)) {
+    const stamped = Number(stored[name]);
+    out[name] = Number.isFinite(stamped) ? stamped : fetchedAt;
+  }
+  return out;
+}
+
 function writeJupPriceCache(
   quotes: Record<string, JupQuote>,
   fetchedAt: number,
+  priceAt: Record<string, number>,
   storage: JupStorage | null,
 ) {
   if (!storage) return;
   try {
-    storage.setItem(JUP_CACHE_KEY, JSON.stringify({ quotes, fetchedAt }));
+    storage.setItem(
+      JUP_CACHE_KEY,
+      JSON.stringify({ quotes, fetchedAt, priceAt }),
+    );
   } catch {
     /* quota / private mode */
   }
@@ -290,7 +325,50 @@ function cachePrices(cached: CachedJup): JupPrices {
     fetchedAt: cached.fetchedAt,
     source: "cache",
     suspect: [],
+    carried: [],
+    carriedAt: cached.priceAt,
   };
+}
+
+/**
+ * A 200 that omits a mint must not erase a price we already cached (< 7 days).
+ * Carried names are "last read" even when the rest of the response is live.
+ */
+function carryMissingPrices(
+  quotes: Record<string, JupQuote>,
+  cached: CachedJup | null,
+  now: number,
+): { quotes: Record<string, JupQuote>; carried: string[]; carriedAt: Record<string, number> } {
+  if (!cached) return { quotes, carried: [], carriedAt: {} };
+  const carried: string[] = [];
+  const carriedAt: Record<string, number> = {};
+  const next = { ...quotes };
+  for (const name of Object.keys(next)) {
+    const fresh = next[name];
+    const prev = cached.quotes[name];
+    if (fresh?.usdPrice == null && prev?.usdPrice != null) {
+      const seen = cached.priceAt[name] ?? cached.fetchedAt;
+      if (!(Number.isFinite(seen) && now - seen <= CACHE_MAX_AGE_MS)) continue;
+      next[name] = prev;
+      carried.push(name);
+      carriedAt[name] = seen;
+    }
+  }
+  return { quotes: next, carried, carriedAt };
+}
+
+function stampPriceAt(
+  quotes: Record<string, JupQuote>,
+  carriedAt: Record<string, number>,
+  now: number,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [name, quote] of Object.entries(quotes)) {
+    if (quote?.usdPrice == null) continue;
+    const kept = carriedAt[name];
+    out[name] = kept != null && Number.isFinite(kept) ? kept : now;
+  }
+  return out;
 }
 
 async function fetchJupOnce(
@@ -379,6 +457,15 @@ export async function fetchJupPrices(opts?: FetchJupOptions): Promise<JupPrices>
     }
   }
 
-  writeJupPriceCache(quotes, now, storage);
-  return { quotes, fetchedAt: now, source: "live", suspect };
+  const carriedIn = carryMissingPrices(quotes, cached, now);
+  const priceAt = stampPriceAt(carriedIn.quotes, carriedIn.carriedAt, now);
+  writeJupPriceCache(carriedIn.quotes, now, priceAt, storage);
+  return {
+    quotes: carriedIn.quotes,
+    fetchedAt: now,
+    source: "live",
+    suspect,
+    carried: carriedIn.carried,
+    carriedAt: carriedIn.carriedAt,
+  };
 }

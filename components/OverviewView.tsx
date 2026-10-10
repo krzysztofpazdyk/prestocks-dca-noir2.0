@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
-import { fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
+import { fmtPriceClock, fmtSignedPnl, fmtUsdAmount } from "@/lib/format-usd";
 import {
   canonicalName,
   isLowLiquidity,
@@ -12,7 +12,7 @@ import {
   type JupPrices,
 } from "@/lib/jup-prices";
 import { priceRows, type PriceRowFlag } from "@/lib/price-rows";
-import { pnlSummary, type PositionRow } from "@/lib/position-value";
+import { pnlSummary, positionPnlKind, type PositionRow } from "@/lib/position-value";
 import {
   DEFAULT_SETTINGS,
   HOLDINGS,
@@ -29,6 +29,11 @@ import {
   type PortfolioBalances,
 } from "@/lib/portfolio-state";
 import { readWeeklyBudgetUsd } from "@/lib/auto-weekly-buy";
+import {
+  budgetsDiffer,
+  needsBudgetConfirm,
+  WEEKLY_BUDGET_EPS,
+} from "@/lib/weekly-budget";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { leaveManualBuy, tryEnterManualBuy } from "@/lib/manual-buy-guard";
 import { isOnChainSignatureReject } from "@/lib/vault-follow-up";
@@ -49,17 +54,28 @@ import {
   rpcHost,
   shortPk,
 } from "@/lib/predca";
+import { livePremiumPct } from "@/lib/premium-view";
 import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
-import { runRankingNow } from "@/lib/ranking";
+import {
+  isFlatFallback,
+  parseRankSession,
+  rankPrefsKey,
+  rankSessionClientSnapshot,
+  rankSessionServerSnapshot,
+  restoreRankSession,
+  runRankingNow,
+  subscribeRankSession,
+} from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/app-version";
 import type { RankResult } from "@/lib/universe";
 
+/** Page-load clock. Avoids Date.now() during render (react-hooks/purity). */
+const UI_CLOCK_AT = Date.now();
+
 /** Short Top-3 h2 from RankResult.mode — never claim live Jev for metrics. */
 function top3TitleFromRank(result: RankResult, locale: string): string {
-  const grok =
-    /grok/i.test(result.sourceLabel || "") ||
-    (result.pipeline || []).some((p) => /grok/i.test(p));
+  const grok = (result.pipeline || []).includes("grok");
   if (result.mode === "metrics_fallback") {
     return locale === "en" ? "Top-3 · metrics" : "Top-3 · metryki";
   }
@@ -71,7 +87,7 @@ function top3TitleFromRank(result: RankResult, locale: string): string {
   return locale === "en" ? "Top-3 · ranking" : "Top-3 · ranking";
 }
 
-const BUDGET_EPS = 0.000001;
+const BUDGET_EPS = WEEKLY_BUDGET_EPS;
 
 /** Intended buy amount: Settings LS is SoT; on-chain is synced before Manual Buy. */
 function resolvePurchaseAmount(
@@ -84,11 +100,6 @@ function resolvePurchaseAmount(
   return DEFAULT_SETTINGS.weeklyAmountUsd;
 }
 
-function budgetsDiffer(ls: number, onChain: number | null): boolean {
-  if (onChain == null || !Number.isFinite(onChain)) return ls > 0;
-  return Math.abs(ls - onChain) > BUDGET_EPS;
-}
-
 type TopPick = {
   name: string;
   score: number;
@@ -96,6 +107,30 @@ type TopPick = {
   premiumPct: number | null;
   premiumSource: string;
 };
+
+type RankView = {
+  top3: TopPick[];
+  title: string | null;
+  subtitle: string | null;
+  premiumBasis: RankResult["premiumBasis"];
+  rankFlat: boolean;
+};
+
+function rankView(result: RankResult, locale: string): RankView {
+  return {
+    top3: result.top3.slice(0, 3).map((row) => ({
+      name: row.name,
+      score: row.score,
+      priceNow: row.token_price_usd,
+      premiumPct: Number.isFinite(row.premium_pct) ? row.premium_pct : null,
+      premiumSource: row.premium_source,
+    })),
+    title: top3TitleFromRank(result, locale),
+    subtitle: result.sourceLabel || null,
+    premiumBasis: result.premiumBasis,
+    rankFlat: isFlatFallback(result),
+  };
+}
 
 function emptyPurchase(): Purchase {
   return {
@@ -124,9 +159,15 @@ export function OverviewView() {
   const [portfolioRevision, setPortfolioRevision] = useState(0);
   const [depositAmt, setDepositAmt] = useState(500);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
-  const [top3, setTop3] = useState<TopPick[]>([]);
-  const [top3Title, setTop3Title] = useState<string | null>(null);
-  const [top3Subtitle, setTop3Subtitle] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<RankView | null>(null);
+  const sessionSnap = useSyncExternalStore(
+    subscribeRankSession,
+    rankSessionClientSnapshot,
+    rankSessionServerSnapshot,
+  );
+  useEffect(() => {
+    restoreRankSession(rankPrefsKey());
+  }, []);
   const [rankBusy, setRankBusy] = useState(false);
   const [rankError, setRankError] = useState<string | null>(null);
   const [purchaseMsg, setPurchaseMsg] = useState<string | null>(null);
@@ -141,6 +182,13 @@ export function OverviewView() {
     kind: "deposit" | "withdraw" | "buy";
     amount: number;
   } | null>(null);
+  const [budgetPrompt, setBudgetPrompt] = useState<{
+    from: number;
+    to: number;
+  } | null>(null);
+  /** Last on-chain change the user already confirmed, so a dup retry does not ask again. */
+  const budgetConfirmedPair = useRef<{ ls: number; chain: number } | null>(null);
+  const [priceNow, setPriceNow] = useState(UI_CLOCK_AT);
   const sigUnresolved = predca.pendingSignature != null;
 
   useEffect(() => {
@@ -257,27 +305,21 @@ export function OverviewView() {
     setPurchaseMsg(null);
     setRankBusy(true);
     try {
-      const productsResult = await fetchPrestocksProducts();
+      const productsResult = await fetchPrestocksProducts(
+        predca.jupPrices.fetchedAt > 0 ? predca.jupPrices : undefined,
+      );
       const result = await runRankingNow(productsResult);
       if (result.error && (!result.top3 || result.top3.length === 0)) {
         throw new Error(result.error);
       }
-      setTop3(
-        result.top3.slice(0, 3).map((r) => ({
-          name: r.name,
-          score: r.score,
-          priceNow: r.token_price_usd,
-          premiumPct: Number.isFinite(r.premium_pct) ? r.premium_pct : null,
-          premiumSource: r.premium_source,
-        })),
-      );
-      setTop3Title(top3TitleFromRank(result, locale));
-      setTop3Subtitle(result.sourceLabel || null);
+      setGenerated(rankView(result, locale));
       const notes: string[] = [];
       if (productsResult.dataSource === "snapshot") {
         notes.push(
           t("prestocks.snapshotDated", { date: PRESTOCKS_SNAPSHOT_DATE }),
         );
+      } else if (productsResult.errorPl) {
+        notes.push(productsResult.errorPl);
       }
       if (result.error) notes.push(result.error);
       if (notes.length) setRankError(notes.join(" "));
@@ -396,7 +438,35 @@ export function OverviewView() {
     );
   }
 
-  async function handlePurchase(acknowledged = false) {
+  function acceptBudgetAndBuy() {
+    const prompt = budgetPrompt;
+    if (!prompt) return;
+    budgetConfirmedPair.current = { ls: prompt.to, chain: prompt.from };
+    setBudgetPrompt(null);
+    void handlePurchase(false, true);
+  }
+
+  async function handlePurchase(acknowledged = false, budgetConfirmed = false) {
+    const lsAmountNow = readWeeklyBudgetUsd(
+      DEFAULT_SETTINGS.weeklyAmountUsd,
+      ownerBase58,
+    );
+    const chainNow = predca.weeklyBudgetUsd;
+    const remembered = budgetConfirmedPair.current;
+    const alreadyConfirmed =
+      budgetConfirmed ||
+      (remembered != null &&
+        chainNow != null &&
+        Math.abs(remembered.ls - lsAmountNow) <= BUDGET_EPS &&
+        Math.abs(remembered.chain - chainNow) <= BUDGET_EPS);
+    if (
+      onChainReady &&
+      chainNow != null &&
+      needsBudgetConfirm(lsAmountNow, chainNow, alreadyConfirmed)
+    ) {
+      setBudgetPrompt({ from: chainNow, to: lsAmountNow });
+      return;
+    }
     if (!tryEnterDupCheck(dupCheckRef)) return;
     setDupChecking(true);
     let allowed = false;
@@ -572,6 +642,16 @@ export function OverviewView() {
     withdrawOverCap ||
     withdrawPresentation === "disabled";
   const showWithdraw = withdrawPresentation !== "hidden";
+  const restored = generated ? null : parseRankSession(sessionSnap.raw, rankPrefsKey());
+  const active = generated ?? (restored ? rankView(restored.rank, locale) : null);
+  const top3 = active?.top3 ?? [];
+  const top3Title = active?.title ?? null;
+  const top3Subtitle = active?.subtitle ?? null;
+  const premiumBasis = active?.premiumBasis ?? null;
+  const rankFlat = active?.rankFlat ?? false;
+  const restoredClock = restored
+    ? fmtPriceClock(restored.savedAt, priceNow, locale)
+    : "";
   const vaultTooLow =
     availableVaultUsdc == null ||
     !Number.isFinite(availableVaultUsdc) ||
@@ -582,6 +662,7 @@ export function OverviewView() {
     sigUnresolved ||
     buyInFlight ||
     top3.length === 0 ||
+    rankFlat ||
     predca.txPending ||
     (onChainReady
       ? vaultTooLow
@@ -596,6 +677,7 @@ export function OverviewView() {
     if (sigUnresolved || buyInFlight) return null;
     if (predca.txPending) return t("purchase.disabled.tx");
     if (predca.status === "error") return t("purchase.disabled.rpcError");
+    if (rankFlat) return t("purchase.disabled.flatRanking");
     if (top3.length === 0) return t("purchase.disabled.noRecs");
     if (connected && !onChainReady) return t("purchase.disabled.notReady");
     if (vaultTooLow) {
@@ -623,18 +705,10 @@ export function OverviewView() {
     })}%`;
   }
 
-  function premiumText(row: TopPick): string {
-    if (
-      row.premiumSource === "jupiter_stockdata" &&
-      row.premiumPct != null &&
-      Number.isFinite(row.premiumPct)
-    ) {
-      return t("premium.label", { pct: fmtPct(row.premiumPct) });
-    }
-    if (row.premiumSource === "hardcoded_fallback" && row.premiumPct != null) {
-      return `${t("premium.estimate")} ${fmtPct(row.premiumPct)}`;
-    }
-    return t("premium.noData");
+  function premiumText(name: string): string {
+    const pct = livePremiumPct(name, predca.jupPrices);
+    if (pct == null) return t("premium.noData");
+    return t("premium.label", { pct: fmtPct(pct) });
   }
 
   const pricesReady = predca.jupPrices.fetchedAt > 0;
@@ -642,15 +716,7 @@ export function OverviewView() {
     (q) => q.usdPrice != null,
   );
   const priceClock = pricesReady
-    ? new Date(predca.jupPrices.fetchedAt).toLocaleTimeString(
-        locale === "en" ? "en-GB" : "pl-PL",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "Europe/Warsaw",
-          hourCycle: "h23",
-        },
-      )
+    ? fmtPriceClock(predca.jupPrices.fetchedAt, priceNow, locale)
     : "";
   const allAtCost =
     predca.positions.length > 0 &&
@@ -1059,7 +1125,10 @@ export function OverviewView() {
           {pricesReady && !predca.pricesLoading && !anyTokenPrice && (
             <p>{t("prices.unavailable")}</p>
           )}
-          {allAtCost && <p>{t("positions.legacyHint")}</p>}
+          {allAtCost &&
+            !(connected && predca.positions.length > 0 && !pnlSummary(predca.positions).hasPriced) && (
+              <p>{t("positions.legacyHint")}</p>
+            )}
         </div>
       )}
 
@@ -1069,6 +1138,11 @@ export function OverviewView() {
         pricesReady={pricesReady}
         locale={locale}
         clock={priceClock}
+        now={priceNow}
+        onRefresh={() => {
+          setPriceNow(Date.now());
+          void predca.refreshPrices();
+        }}
       />
 
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
@@ -1099,6 +1173,11 @@ export function OverviewView() {
                 {top3Subtitle ? (
                   <p className="mt-0.5 text-[10px] normal-case tracking-normal text-[#8b95a8]">
                     {top3Subtitle}
+                  </p>
+                ) : null}
+                {restoredClock ? (
+                  <p className="mt-0.5 text-[10px] normal-case tracking-normal text-[#8b95a8]">
+                    {t("top3.restored", { time: restoredClock })}
                   </p>
                 ) : null}
               </div>
@@ -1159,14 +1238,23 @@ export function OverviewView() {
                   <p className="mt-1 text-[10px] text-[#8b95a8]">
                     <span className="mono-num">
                       {t("positions.col.price")}{" "}
-                      {fmtUsdAmount(r.priceNow, locale) ?? t("positions.noData")}
+                      {fmtUsdAmount(
+                        quoteByName(predca.jupPrices.quotes, r.name)?.usdPrice ??
+                          r.priceNow,
+                        locale,
+                      ) ?? t("positions.noData")}
                     </span>
                     {" · "}
-                    {premiumText(r)}
+                    {premiumText(r.name)}
                   </p>
                 </li>
               ))}
             </ol>
+            {premiumBasis ? (
+              <p className="mt-3 text-[10px] normal-case leading-relaxed tracking-normal text-[#8b95a8]">
+                {t(`rank.premiumBasis.${premiumBasis}`)}
+              </p>
+            ) : null}
             {rankError && (
               <p className="mt-3 text-xs text-[#f87171]">{rankError}</p>
             )}
@@ -1175,6 +1263,32 @@ export function OverviewView() {
                 {purchaseDisabledReason}
               </p>
             )}
+            {budgetPrompt ? (
+              <div className="mt-3 rounded border border-[#fbbf2433] bg-[#fbbf2411] px-3 py-2 text-xs text-[#fbbf24]">
+                <p>
+                  {t("purchase.confirmBudget", {
+                    from: formatUsd(budgetPrompt.from),
+                    to: formatUsd(budgetPrompt.to),
+                  })}
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={acceptBudgetAndBuy}
+                    className="rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider"
+                  >
+                    {t("btn.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBudgetPrompt(null)}
+                    className="rounded border border-current px-2 py-1 text-[10px] uppercase tracking-wider"
+                  >
+                    {t("btn.cancel")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {dupNotice("buy", resolvePurchaseAmount(predca.weeklyBudgetUsd, ownerBase58))}
             {purchaseMsg && (
               <p
@@ -1274,21 +1388,42 @@ function PricesPanel({
   pricesReady,
   locale,
   clock,
+  now,
+  onRefresh,
 }: {
   prices: JupPrices;
   pricesLoading: boolean;
   pricesReady: boolean;
   locale: string;
   clock: string;
+  now: number;
+  onRefresh: () => void;
 }) {
   const { t } = useI18n();
-  const loading = !pricesReady || (pricesLoading && !pricesReady);
+  const loading = !pricesReady;
   const rows = priceRows(prices.quotes, prices.fetchedAt, prices);
+  const badgeClock = (name: string): string => {
+    const at = prices.carriedAt?.[name];
+    if (at != null && Number.isFinite(at)) return fmtPriceClock(at, now, locale);
+    return clock;
+  };
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
-      <h2 className="mb-3 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
-        {t("prices.panelTitle")}
-      </h2>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
+          {t("prices.panelTitle")}
+        </h2>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={pricesLoading}
+          title={t("prices.refresh")}
+          aria-label={t("prices.refresh")}
+          className="rounded border border-[#1e2633] px-2 py-1 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5] disabled:opacity-40"
+        >
+          ↻
+        </button>
+      </div>
       {loading ? (
         <p className="text-xs text-[#8b95a8]">{t("prices.loading")}</p>
       ) : (
@@ -1309,7 +1444,7 @@ function PricesPanel({
                 {rows.map((row) => {
                   const renderBadges = () =>
                     row.flags.map((flag) => (
-                      <Badge key={flag}>{statusLabel(flag, t, clock)}</Badge>
+                      <Badge key={flag}>{statusLabel(flag, t, badgeClock(row.name))}</Badge>
                     ));
                   return (
                     <tr key={row.name} className="border-t border-[#1e2633] align-top">
@@ -1361,7 +1496,7 @@ function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
   const neg = pnl != null && pnl < 0;
   const pnlClass = pos ? "text-[#34d399]" : neg ? "text-[#f87171]" : "text-[#8b95a8]";
   const money = summary.hasPriced ? fmtSignedPnl(pnl, summary.pnlPct, locale) : null;
-  const atCost = fmtUsdAmount(summary.legacyCostUsd, locale);
+  const atCost = fmtUsdAmount(summary.unpricedCostUsd, locale);
   return (
     <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
       <h2 className="mb-2 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
@@ -1376,7 +1511,10 @@ function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
           {t("pnl.atCostValue", { value: atCost ?? t("positions.noData") })}
         </p>
       )}
-      {!summary.hasPriced && (
+      {summary.hasUnpricedV2 && (
+        <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.noPriceNote")}</p>
+      )}
+      {!summary.hasPriced && summary.hasLegacy && (
         <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.legacyNote")}</p>
       )}
       {summary.hasPriced && summary.hasLegacy && (
@@ -1468,9 +1606,9 @@ function PositionsCard({
                     {fmtUsdAmount(row.avgBuyPrice, locale) ?? "—"}
                   </td>
                   <td className={`mono-num py-2 ${pnlClass}`}>
-                    {row.basis === "cost" ? (
+                    {positionPnlKind(row) === "legacy" ? (
                       <span title={t("pnl.legacyNote")}>—</span>
-                    ) : row.pnlUsd == null ? (
+                    ) : positionPnlKind(row) === "nodata" ? (
                       t("positions.noData")
                     ) : (
                       fmtSignedPnl(row.pnlUsd, row.pnlPct, locale)

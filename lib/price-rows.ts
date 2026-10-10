@@ -29,14 +29,20 @@ export type PricePanelRow = {
 export function priceRows(
   quotes: Record<string, JupQuote>,
   now: number,
-  source: { source: "live" | "cache"; suspect: string[] },
+  source: { source: "live" | "cache"; suspect: string[]; carried?: string[] },
 ): PricePanelRow[] {
   const names = Object.keys(MINTS).sort((a, b) => a.localeCompare(b, "en"));
+  const carried = source.carried ?? [];
   return names.map((name) => {
     const quote = quoteByName(quotes, name);
     const usdPrice = quote?.usdPrice ?? null;
     const flags: PriceRowFlag[] = [];
-    if (source.source === "cache") flags.push("cache");
+    if (
+      source.source === "cache" ||
+      carried.some((n) => canonicalName(n) === canonicalName(name))
+    ) {
+      flags.push("cache");
+    }
     if (usdPrice == null) flags.push("no-data");
     if (source.suspect.some((n) => canonicalName(n) === canonicalName(name))) {
       flags.push("suspect");
