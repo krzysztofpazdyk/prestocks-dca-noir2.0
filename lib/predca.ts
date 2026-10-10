@@ -494,7 +494,7 @@ export async function fetchSolBalance(
 export type MockTokenBalance = {
   name: string;
   mint: PublicKey;
-  /** Human amount (raw / 1e6). Devnet mock: 1 unit ≈ $1 USD. */
+  /** Human amount (raw / 1e6). Token count, not a market value. */
   amount: number;
   raw: bigint;
 };

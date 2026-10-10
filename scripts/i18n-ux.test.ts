@@ -36,3 +36,55 @@ test("Polish deposit hints no longer say Deposit or Hint", () => {
   const nav = pl.match(/"nav\.selectWallet":\s*"([^"]+)"/);
   assert.equal(nav?.[1], "Zaloguj");
 });
+
+test("jupiter price and position keys exist in Polish and English", () => {
+  const keys = [
+    "positions.title",
+    "positions.col.asset",
+    "positions.col.units",
+    "positions.col.price",
+    "positions.col.value",
+    "positions.col.avgBuy",
+    "positions.col.pnl",
+    "positions.noData",
+    "positions.atCost",
+    "positions.legacyHint",
+    "positions.mismatch",
+    "prices.source",
+    "prices.stale",
+    "prices.unavailable",
+    "prices.suspect",
+    "prices.lowLiquidity",
+    "prices.multiplier",
+    "premium.label",
+    "premium.noData",
+    "premium.estimate",
+    "history.buyPrice",
+    "prestocks.snapshotDated",
+  ];
+  for (const key of keys) {
+    assert.equal(values(key).length, 2, key);
+    for (const text of values(key)) assert.ok(text.length > 0, key);
+  }
+  assert.deepEqual(values("positions.title"), ["Pozycje", "Positions"]);
+  assert.deepEqual(values("positions.noData"), ["brak danych", "no data"]);
+  assert.deepEqual(values("premium.estimate"), ["szacunek", "estimate"]);
+  assert.equal(
+    values("prices.stale")[0],
+    "ceny: ostatni odczyt · {time}",
+  );
+  assert.equal(
+    values("prestocks.snapshotDated")[1],
+    "No live PreStocks. Using static snapshot from {date} (not live).",
+  );
+});
+
+test("Overview and Trading desk stay English in the Polish dictionary", () => {
+  const pl = src.slice(src.indexOf("const pl"), src.indexOf("const en"));
+  assert.match(pl, /"nav\.overview": "Overview"/);
+  assert.match(pl, /"overview\.title": "Overview"/);
+  assert.match(pl, /Trading desk/);
+  assert.doesNotMatch(pl, /"positions\.title": "[^"]*Hint/);
+  assert.equal(values("overview.rpcStale")[0], "ostatni odczyt");
+  assert.notEqual(values("prices.stale")[0], values("overview.rpcStale")[0]);
+});

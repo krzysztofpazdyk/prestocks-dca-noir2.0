@@ -5,13 +5,19 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { claimFaucetUsdc } from "@/lib/dca-api";
 import { HoldingsPie } from "./HoldingsPie";
 import {
+  canonicalName,
+  isLowLiquidity,
+  quoteByName,
+  type JupPrices,
+} from "@/lib/jup-prices";
+import type { PositionRow } from "@/lib/position-value";
+import {
   DEFAULT_SETTINGS,
   HOLDINGS,
   LAST_PURCHASE,
   MOCK_BALANCES,
   MOCK_VAULT_USDC,
   type Holding,
-  type JevRank,
   type Purchase,
 } from "@/lib/mock-data";
 import {
@@ -41,7 +47,7 @@ import {
   rpcHost,
   shortPk,
 } from "@/lib/predca";
-import { fetchPrestocksProducts } from "@/lib/prestocks";
+import { fetchPrestocksProducts, PRESTOCKS_SNAPSHOT_DATE } from "@/lib/prestocks";
 import { runRankingNow } from "@/lib/ranking";
 import { useI18n } from "@/lib/i18n";
 import { APP_VERSION } from "@/lib/app-version";
@@ -81,6 +87,14 @@ function budgetsDiffer(ls: number, onChain: number | null): boolean {
   return Math.abs(ls - onChain) > BUDGET_EPS;
 }
 
+type TopPick = {
+  name: string;
+  score: number;
+  priceNow: number | null;
+  premiumPct: number | null;
+  premiumSource: string;
+};
+
 function emptyPurchase(): Purchase {
   return {
     date: "—",
@@ -108,7 +122,7 @@ export function OverviewView() {
   const [portfolioRevision, setPortfolioRevision] = useState(0);
   const [depositAmt, setDepositAmt] = useState(500);
   const [withdrawAmt, setWithdrawAmt] = useState(10);
-  const [top3, setTop3] = useState<JevRank[]>([]);
+  const [top3, setTop3] = useState<TopPick[]>([]);
   const [top3Title, setTop3Title] = useState<string | null>(null);
   const [top3Subtitle, setTop3Subtitle] = useState<string | null>(null);
   const [rankBusy, setRankBusy] = useState(false);
@@ -250,13 +264,21 @@ export function OverviewView() {
         result.top3.slice(0, 3).map((r) => ({
           name: r.name,
           score: r.score,
+          priceNow: r.token_price_usd,
+          premiumPct: Number.isFinite(r.premium_pct) ? r.premium_pct : null,
+          premiumSource: r.premium_source,
         })),
       );
       setTop3Title(top3TitleFromRank(result, locale));
       setTop3Subtitle(result.sourceLabel || null);
-      if (result.error) {
-        setRankError(result.error);
+      const notes: string[] = [];
+      if (productsResult.dataSource === "snapshot") {
+        notes.push(
+          t("prestocks.snapshotDated", { date: PRESTOCKS_SNAPSHOT_DATE }),
+        );
       }
+      if (result.error) notes.push(result.error);
+      if (notes.length) setRankError(notes.join(" "));
     } catch (e) {
       setRankError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -590,6 +612,47 @@ export function OverviewView() {
       maximumFractionDigits: digits,
     });
   }
+
+  function fmtPct(value: number): string {
+    return `${value.toLocaleString(locale === "en" ? "en-US" : "pl-PL", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+      signDisplay: "exceptZero",
+    })}%`;
+  }
+
+  function premiumText(row: TopPick): string {
+    if (
+      row.premiumSource === "jupiter_stockdata" &&
+      row.premiumPct != null &&
+      Number.isFinite(row.premiumPct)
+    ) {
+      return t("premium.label", { pct: fmtPct(row.premiumPct) });
+    }
+    if (row.premiumSource === "hardcoded_fallback" && row.premiumPct != null) {
+      return `${t("premium.estimate")} ${fmtPct(row.premiumPct)}`;
+    }
+    return t("premium.noData");
+  }
+
+  const pricesReady = predca.jupPrices.fetchedAt > 0;
+  const anyTokenPrice = Object.values(predca.jupPrices.quotes).some(
+    (q) => q.usdPrice != null,
+  );
+  const priceClock = pricesReady
+    ? new Date(predca.jupPrices.fetchedAt).toLocaleTimeString(
+        locale === "en" ? "en-GB" : "pl-PL",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Europe/Warsaw",
+          hourCycle: "h23",
+        },
+      )
+    : "";
+  const allAtCost =
+    predca.positions.length > 0 &&
+    predca.positions.every((row) => row.basis === "cost");
 
   const vaultStat =
     predca.status === "error" && predca.vaultUsdc != null
@@ -985,9 +1048,17 @@ export function OverviewView() {
         ))}
       </div>
       {connected && (
-        <p className="text-[10px] text-[#8b95a8]">
-          {t("tile.portfolioHint")}
-        </p>
+        <div className="space-y-1 text-[10px] text-[#8b95a8]">
+          <p>{t("tile.portfolioHint")}</p>
+          {pricesReady && <p>{t("prices.source")}</p>}
+          {pricesReady && predca.jupPrices.source === "cache" && (
+            <p>{t("prices.stale", { time: priceClock })}</p>
+          )}
+          {pricesReady && !predca.pricesLoading && !anyTokenPrice && (
+            <p>{t("prices.unavailable")}</p>
+          )}
+          {allAtCost && <p>{t("positions.legacyHint")}</p>}
+        </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-2 lg:items-stretch">
@@ -1064,15 +1135,25 @@ export function OverviewView() {
               {top3.map((r, i) => (
                 <li
                   key={`${r.name}-${i}`}
-                  className="flex items-center justify-between rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2"
+                  className="rounded border border-[#1e2633] bg-[#0c0e12] px-3 py-2"
                 >
-                  <span className="flex items-center gap-3 text-sm">
-                    <span className="mono-num text-[#2dd4bf]">#{i + 1}</span>
-                    {r.name}
-                  </span>
-                  <span className="mono-num text-sm text-[#a78bfa]">
-                    {r.score.toFixed(1)}
-                  </span>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-3 text-sm">
+                      <span className="mono-num text-[#2dd4bf]">#{i + 1}</span>
+                      {r.name}
+                    </span>
+                    <span className="mono-num text-sm text-[#a78bfa]">
+                      {r.score.toFixed(1)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-[#8b95a8]">
+                    <span className="mono-num">
+                      {t("positions.col.price")}{" "}
+                      {r.priceNow != null ? formatUsd(r.priceNow) : t("positions.noData")}
+                    </span>
+                    {" · "}
+                    {premiumText(r)}
+                  </p>
                 </li>
               ))}
             </ol>
@@ -1149,7 +1230,119 @@ export function OverviewView() {
           </section>
         </div>
       </div>
+
+      {connected && predca.positions.length > 0 && (
+        <PositionsCard
+          rows={predca.positions}
+          prices={predca.jupPrices}
+          fmt={fmtTile}
+        />
+      )}
     </div>
+  );
+}
+
+function PositionsCard({
+  rows,
+  prices,
+  fmt,
+}: {
+  rows: PositionRow[];
+  prices: JupPrices;
+  fmt: (value: number | null, digits?: number) => string;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="rounded-lg border border-[#1e2633] bg-[#141820] p-5">
+      <h2 className="mb-3 text-[11px] uppercase tracking-[0.15em] text-[#a78bfa]">
+        {t("positions.title")}
+      </h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-[#8b95a8]">
+              <th className="py-1 pr-3 font-medium">{t("positions.col.asset")}</th>
+              <th className="hidden py-1 pr-3 font-medium sm:table-cell">
+                {t("positions.col.units")}
+              </th>
+              <th className="py-1 pr-3 font-medium">{t("positions.col.price")}</th>
+              <th className="py-1 pr-3 font-medium">{t("positions.col.value")}</th>
+              <th className="hidden py-1 pr-3 font-medium sm:table-cell">
+                {t("positions.col.avgBuy")}
+              </th>
+              <th className="py-1 font-medium">{t("positions.col.pnl")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const quote = quoteByName(prices.quotes, row.name);
+              const suspect = prices.suspect.some(
+                (name) => canonicalName(name) === canonicalName(row.name),
+              );
+              const pnlPos = row.pnlUsd != null && row.pnlUsd > 0;
+              const pnlNeg = row.pnlUsd != null && row.pnlUsd < 0;
+              let pnlClass = "text-[#8b95a8]";
+              if (pnlPos) pnlClass = "text-[#34d399]";
+              else if (pnlNeg) pnlClass = "text-[#f87171]";
+              const lowLiq = Boolean(quote && isLowLiquidity(quote));
+              const showBadges =
+                row.basis === "cost" || suspect || lowLiq || Boolean(quote?.multiplierChange);
+              return (
+                <tr key={row.name} className="border-t border-[#1e2633] align-top">
+                  <td className="py-2 pr-3 text-[#c5cedb]">
+                    <div>{row.name}</div>
+                    {showBadges && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {row.basis === "cost" && (
+                          <Badge>{t("positions.atCost")}</Badge>
+                        )}
+                        {suspect && <Badge>{t("prices.suspect")}</Badge>}
+                        {lowLiq && <Badge>{t("prices.lowLiquidity")}</Badge>}
+                        {quote?.multiplierChange && (
+                          <Badge>{t("prices.multiplier")}</Badge>
+                        )}
+                      </div>
+                    )}
+                    {row.mismatch && (
+                      <p className="mt-1 text-[10px] text-[#fbbf24]">
+                        {t("positions.mismatch")}
+                      </p>
+                    )}
+                  </td>
+                  <td className="mono-num hidden py-2 pr-3 sm:table-cell">
+                    {fmt(row.units, 4)}
+                  </td>
+                  <td className="mono-num py-2 pr-3">
+                    {row.priceNow != null ? fmt(row.priceNow) : t("positions.noData")}
+                  </td>
+                  <td className="mono-num py-2 pr-3 text-[#2dd4bf]">
+                    {fmt(row.valueUsd)}
+                  </td>
+                  <td className="mono-num hidden py-2 pr-3 sm:table-cell">
+                    {row.avgBuyPrice != null ? fmt(row.avgBuyPrice) : "—"}
+                  </td>
+                  <td className={`mono-num py-2 ${pnlClass}`}>
+                    {row.pnlUsd == null
+                      ? t("positions.noData")
+                      : `${pnlPos ? "+" : ""}${fmt(row.pnlUsd)}${
+                          row.pnlPct == null ? "" : ` (${pnlPos ? "+" : ""}${fmt(row.pnlPct, 1)}%)`
+                        }`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function Badge({ children }: { children: string }) {
+  return (
+    <span className="rounded border border-[#fbbf2444] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#fbbf24]">
+      {children}
+    </span>
   );
 }
 
