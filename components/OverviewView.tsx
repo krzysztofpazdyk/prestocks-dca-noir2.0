@@ -179,6 +179,7 @@ export function OverviewView() {
   /** Last on-chain change the user already confirmed, so a dup retry does not ask again. */
   const budgetConfirmedPair = useRef<{ ls: number; chain: number } | null>(null);
   const [priceNow, setPriceNow] = useState(UI_CLOCK_AT);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const sigUnresolved = predca.pendingSignature != null;
 
   useEffect(() => {
@@ -1337,9 +1338,16 @@ export function OverviewView() {
         </div>
       </div>
 
-      {showPnl && <PnlSection rows={predca.positions} locale={locale} />}
-
       {showPnl && (
+        <PnlSection
+          rows={predca.positions}
+          locale={locale}
+          detailsOpen={detailsOpen}
+          onToggleDetails={() => setDetailsOpen((open) => !open)}
+        />
+      )}
+
+      {showPnl && detailsOpen && (
         <PositionsCard
           rows={predca.positions}
           prices={predca.jupPrices}
@@ -1348,18 +1356,20 @@ export function OverviewView() {
         />
       )}
 
-      <PricesPanel
-        prices={predca.jupPrices}
-        pricesLoading={predca.pricesLoading}
-        pricesReady={pricesReady}
-        locale={locale}
-        clock={priceClock}
-        now={priceNow}
-        onRefresh={() => {
-          setPriceNow(Date.now());
-          void predca.refreshPrices();
-        }}
-      />
+      {showPnl && detailsOpen && (
+        <PricesPanel
+          prices={predca.jupPrices}
+          pricesLoading={predca.pricesLoading}
+          pricesReady={pricesReady}
+          locale={locale}
+          clock={priceClock}
+          now={priceNow}
+          onRefresh={() => {
+            setPriceNow(Date.now());
+            void predca.refreshPrices();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1497,7 +1507,17 @@ function fmtPanelPct(value: number, locale: string): string {
   return formatPremiumPct(value, locale);
 }
 
-function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
+function PnlSection({
+  rows,
+  locale,
+  detailsOpen,
+  onToggleDetails,
+}: {
+  rows: PositionRow[];
+  locale: string;
+  detailsOpen: boolean;
+  onToggleDetails: () => void;
+}) {
   const { t } = useI18n();
   const summary = pnlSummary(rows);
   const pnl = summary.pnlUsd;
@@ -1529,6 +1549,14 @@ function PnlSection({ rows, locale }: { rows: PositionRow[]; locale: string }) {
       {summary.hasPriced && summary.hasLegacy && (
         <p className="mt-1 text-[10px] text-[#8b95a8]">{t("pnl.partialNote")}</p>
       )}
+      <button
+        type="button"
+        onClick={onToggleDetails}
+        aria-expanded={detailsOpen}
+        className="mt-3 rounded border border-[#1e2633] px-3 py-1 text-[10px] uppercase tracking-wider text-[#8b95a8] hover:text-[#e8eef5]"
+      >
+        {detailsOpen ? t("pnl.hideDetails") : t("pnl.details")}
+      </button>
     </section>
   );
 }

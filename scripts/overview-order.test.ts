@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("the price panel sits under profit/loss and the whole positions table", () => {
+test("positions and the price panel open together under profit/loss", () => {
   const overview = readFileSync(
     new URL("../components/OverviewView.tsx", import.meta.url),
     "utf8",
@@ -16,13 +16,24 @@ test("the price panel sits under profit/loss and the whole positions table", () 
   assert.ok(pnl < positions && positions < panel);
   assert.match(
     overview,
-    /\{showPnl && \(?\s*<PositionsCard[\s\S]*?\/>\s*\)?\}\s*<PricesPanel/,
+    /const showPnl = connected && predca\.positions\.length > 0;/,
   );
   assert.match(
     overview,
-    /const showPnl = connected && predca\.positions\.length > 0;/,
+    /const \[detailsOpen, setDetailsOpen\] = useState\(false\);/,
   );
-  const panelLine = overview.split("\n").find((line) => line.includes("<PricesPanel"));
-  assert.equal(panelLine?.startsWith("      <PricesPanel"), true);
+  assert.match(
+    overview,
+    /\{showPnl && detailsOpen && \(\s*<PositionsCard[\s\S]*?\/>\s*\)\}\s*\{showPnl && detailsOpen && \(\s*<PricesPanel/,
+  );
+  const pnlFn = overview.slice(
+    overview.indexOf("function PnlSection"),
+    overview.indexOf("function PositionsCard"),
+  );
+  assert.match(pnlFn, /aria-expanded=\{detailsOpen\}/);
+  assert.match(
+    pnlFn,
+    /detailsOpen \? t\("pnl\.hideDetails"\) : t\("pnl\.details"\)/,
+  );
   assert.match(overview, /^      <div className="grid gap-4 lg:grid-cols-2/m);
 });

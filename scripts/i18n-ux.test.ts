@@ -64,6 +64,8 @@ test("jupiter price and position keys exist in Polish and English", () => {
     "prices.loading",
     "prices.lastRead",
     "pnl.title",
+    "pnl.details",
+    "pnl.hideDetails",
     "pnl.total",
     "pnl.atCostValue",
     "pnl.legacyNote",
@@ -107,6 +109,8 @@ test("Overview and Trading desk stay English in the Polish dictionary", () => {
   assert.equal(values("prices.panelTitle")[0], "Ceny tokenów vs wycena spółek");
   assert.equal(values("prices.lastRead")[0], "ostatni odczyt · {time}");
   assert.equal(values("pnl.legacyNote")[1], "PnL available for purchases at market price (coming soon).");
+  assert.deepEqual(values("pnl.details"), ["Szczegóły", "Details"]);
+  assert.deepEqual(values("pnl.hideDetails"), ["Ukryj szczegóły", "Hide details"]);
   const history = readFileSync(
     new URL("../components/HistoryView.tsx", import.meta.url),
     "utf8",

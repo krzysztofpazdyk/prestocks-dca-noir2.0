@@ -340,6 +340,8 @@ const pl: Dict = {
   "pnl.legacyNote": "PnL dostępny dla zakupów po cenie rynkowej (wkrótce).",
   "pnl.partialNote": "PnL tylko dla zakupów po cenie rynkowej; część pozycji po koszcie.",
   "pnl.noPriceNote": "Część zakupów po cenie rynkowej nie ma teraz ceny — PnL pominięty.",
+  "pnl.details": "Szczegóły",
+  "pnl.hideDetails": "Ukryj szczegóły",
 
   "premium.label": "Token vs wycena spółki",
   "premium.noData": "Token vs wycena: brak danych",
@@ -679,6 +681,8 @@ const en: Dict = {
   "pnl.legacyNote": "PnL available for purchases at market price (coming soon).",
   "pnl.partialNote": "PnL only for market-price purchases; some positions are at cost.",
   "pnl.noPriceNote": "Some market-price purchases have no current price — P/L skipped.",
+  "pnl.details": "Details",
+  "pnl.hideDetails": "Hide details",
 
   "premium.label": "Token vs valuation",
   "premium.noData": "Token vs valuation: no data",
