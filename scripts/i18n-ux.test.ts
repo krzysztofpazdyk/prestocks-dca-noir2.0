@@ -109,8 +109,8 @@ test("Overview and Trading desk stay English in the Polish dictionary", () => {
   assert.equal(values("prices.panelTitle")[0], "Ceny tokenów vs wycena spółek");
   assert.equal(values("prices.lastRead")[0], "ostatni odczyt · {time}");
   assert.equal(values("pnl.legacyNote")[1], "PnL available for purchases at market price (coming soon).");
-  assert.deepEqual(values("pnl.details"), ["Szczegóły", "Details"]);
-  assert.deepEqual(values("pnl.hideDetails"), ["Ukryj szczegóły", "Hide details"]);
+  assert.deepEqual(values("pnl.details"), ["Dodatkowe informacje", "Additional Info"]);
+  assert.deepEqual(values("pnl.hideDetails"), ["Ukryj dodatkowe informacje", "Hide additional info"]);
   const history = readFileSync(
     new URL("../components/HistoryView.tsx", import.meta.url),
     "utf8",
