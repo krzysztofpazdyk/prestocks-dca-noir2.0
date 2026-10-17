@@ -206,6 +206,21 @@ const pl: Dict = {
   "auto.status.needVault":
     "Najpierw wpłać USDC do vaulta na Overview. Auto-zakup startuje, gdy vault ma środki.",
   "auto.status.error": "Auto-zakup nieudany: {reason}",
+  "auto.error.fallback": "Auto-zakup nieudany. Spróbuj ponownie później.",
+  "auto.error.insufficient": "Za mało środków na auto-zakup.",
+  "auto.error.rejected": "Odrzucono prośbę w portfelu.",
+  "auto.error.slippage": "Cena się zmieniła. Spróbuj ponownie później.",
+  "auto.error.network": "Problem z siecią. Spróbuj ponownie później.",
+  "auto.error.simulation": "Symulacja transakcji nie powiodła się.",
+  "auto.error.predca.6000": "Brak uprawnień (Unauthorized).",
+  "auto.error.predca.6001": "Kwota musi być większa od zera.",
+  "auto.error.predca.6002": "Niewystarczające saldo w vault.",
+  "auto.error.predca.6003": "Nieprawidłowy budżet tygodniowy (musi być > 0).",
+  "auto.error.predca.6004": "Indeks RunRecord zajęty. Spróbuj ponownie.",
+  "auto.error.predca.6005": "Mint authority musi być PDA mint_auth programu.",
+  "auto.error.predca.6006": "Mint nie zgadza się z kontem w instrukcji.",
+  "auto.error.predca.6007": "Duplikaty mintów w top-3.",
+  "auto.error.predca.6008": "Za wcześnie: odczekaj 7 dni od ostatniego zakupu (TooSoon).",
   "auto.status.enablePending":
     "Keeper jeszcze kończy włączanie. Zaczekaj — nie wysyłaj drugiego włączenia.",
   "auto.status.enableUnknown":
@@ -547,6 +562,21 @@ const en: Dict = {
   "auto.status.needVault":
     "Deposit USDC into the vault on Overview first. Auto-buy starts once the vault holds funds.",
   "auto.status.error": "Auto-buy failed: {reason}",
+  "auto.error.fallback": "Auto-buy failed. Try again later.",
+  "auto.error.insufficient": "Not enough funds for the auto-buy.",
+  "auto.error.rejected": "The wallet rejected the request.",
+  "auto.error.slippage": "The price moved. Try again later.",
+  "auto.error.network": "Network problem. Try again later.",
+  "auto.error.simulation": "The transaction simulation failed.",
+  "auto.error.predca.6000": "Missing permission.",
+  "auto.error.predca.6001": "The amount must be greater than zero.",
+  "auto.error.predca.6002": "Not enough balance in the vault.",
+  "auto.error.predca.6003": "The weekly budget is invalid.",
+  "auto.error.predca.6004": "That purchase slot is taken. Try again.",
+  "auto.error.predca.6005": "The mint authority is invalid.",
+  "auto.error.predca.6006": "The mint does not match the account.",
+  "auto.error.predca.6007": "The top 3 contains duplicate mints.",
+  "auto.error.predca.6008": "Too soon. Wait 7 days since the last purchase.",
   "auto.status.enablePending":
     "The keeper is still finishing enable. Wait — don't send a second enable.",
   "auto.status.enableUnknown":
@@ -710,6 +740,16 @@ function interpolate(template: string, vars?: Vars): string {
   );
 }
 
+export function translate(
+  locale: Locale,
+  key: string,
+  vars?: Vars,
+): string {
+  const dict = dictionaries[locale] ?? dictionaries.pl;
+  const raw = dict[key] ?? dictionaries.pl[key] ?? dictionaries.en[key] ?? key;
+  return interpolate(raw, vars);
+}
+
 type I18nContextValue = {
   locale: Locale;
   setLocale: (locale: Locale) => void;
@@ -748,11 +788,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const t = useCallback(
-    (key: string, vars?: Vars) => {
-      const dict = dictionaries[locale] ?? dictionaries.pl;
-      const raw = dict[key] ?? dictionaries.pl[key] ?? dictionaries.en[key] ?? key;
-      return interpolate(raw, vars);
-    },
+    (key: string, vars?: Vars) => translate(locale, key, vars),
     [locale],
   );
 

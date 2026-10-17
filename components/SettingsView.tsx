@@ -19,6 +19,7 @@ import { usePredca } from "@/lib/hooks/usePredca";
 import { TxNotice } from "@/components/TxNotice";
 import { explorerTxUrl, formatUsd } from "@/lib/predca";
 import { UNRESOLVED_MSG } from "@/lib/pending-tx";
+import { presentAutoBuyError } from "@/lib/auto-buy-error";
 import { autoToggleBlocked } from "@/lib/auto-weekly-buy";
 import { useI18n } from "@/lib/i18n";
 import {
@@ -429,6 +430,10 @@ export function SettingsView() {
   }
 
   const canSign = !!publicKey && !!signMessage;
+  const autoBuyError =
+    autoBuy.phase === "error" && autoBuy.message
+      ? presentAutoBuyError(autoBuy.message, t)
+      : null;
 
   return (
     <div className="mx-auto max-w-xl space-y-5">
@@ -654,6 +659,7 @@ export function SettingsView() {
           ) : null}
           {autoBuy.message && autoBuy.phase !== "idle" ? (
             <p
+              title={autoBuyError?.title}
               className={`mt-2 text-[10px] ${
                 autoBuy.phase === "error"
                   ? "text-[#fca5a5]"
@@ -662,7 +668,7 @@ export function SettingsView() {
                     : "text-[#8b95a8]"
               }`}
             >
-              {autoBuy.message}
+              {autoBuyError?.text ?? autoBuy.message}
             </p>
           ) : null}
         </div>
