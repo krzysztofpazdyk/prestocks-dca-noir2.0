@@ -45,6 +45,7 @@ import {
   type AutoBuyBlockReason,
   type EnableStatusBaseline,
 } from "@/lib/auto-weekly-buy";
+import { presentAutoBuyError } from "@/lib/auto-buy-error";
 import { useI18n } from "@/lib/i18n";
 import { usePredca } from "@/lib/hooks/usePredca";
 import { keeperEnabledForConnectedOwner } from "@/lib/keeper-enabled";
@@ -775,6 +776,16 @@ export function AutoWeeklyBuyProvider({ children }: { children: ReactNode }) {
 export function AutoWeeklyBuyBanner() {
   const value = useAutoWeeklyBuy();
   const { t } = useI18n();
+  const errorView =
+    value.phase === "error" && value.message
+      ? presentAutoBuyError(value.message, t)
+      : null;
+
+  useEffect(() => {
+    if (!errorView?.title) return;
+    console.debug("auto-buy error", errorView.title);
+  }, [errorView?.title]);
+
   const showBanner =
     value.phase === "ranking" ||
     value.phase === "buying" ||
@@ -782,9 +793,16 @@ export function AutoWeeklyBuyBanner() {
     value.phase === "error" ||
     (value.phase === "ok" && value.message != null);
   if (!showBanner || !value.message) return null;
+  const text =
+    value.phase === "ranking"
+      ? t("auto.banner.ranking")
+      : value.phase === "buying"
+        ? value.message || t("auto.banner.buying")
+        : (errorView?.text ?? value.message);
   return (
     <div
       role="status"
+      title={errorView?.title}
       className={`border-b px-4 py-2 text-center text-xs ${
         value.phase === "error"
           ? "border-[#f8717133] bg-[#f8717111] text-[#fca5a5]"
@@ -793,11 +811,7 @@ export function AutoWeeklyBuyBanner() {
             : "border-[#2dd4bf33] bg-[#2dd4bf11] text-[#2dd4bf]"
       }`}
     >
-      {value.phase === "ranking"
-        ? t("auto.banner.ranking")
-        : value.phase === "buying"
-          ? value.message || t("auto.banner.buying")
-          : value.message}
+      {text}
     </div>
   );
 }
